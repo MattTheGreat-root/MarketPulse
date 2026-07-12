@@ -7,46 +7,38 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
-# Import the blueprint
 from core.base_scraper import BaseScraper
 
 class RubinoScraper(BaseScraper):
     def __init__(self, driver, target, output_dir="data"):
-        # 1. Initialize the parent class (BaseScraper)
         super().__init__(driver, target, output_dir)
-        
-        # 2. Override the output_path to ensure a NEW file every run using a timestamp
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         safe_target = "".join(c for c in self.target if c.isalnum() or c in ('_', '-'))
         self.output_path = os.path.join(self.output_dir, f"{safe_target}_{timestamp}.csv")
 
     def navigate_to_page(self) -> bool:
-        """
-        Uses self.target from the base class to navigate to the profile.
-        """
         print(f"[*] Looking for page: @{self.target}")
-        wait = WebDriverWait(self.driver, 15)
+        wait = WebDriverWait(self.driver, 10)
 
         try:
             self.driver.switch_to.default_content()
-            time.sleep(2)
+            time.sleep(0.5)
 
             vitrin_tab_xpath = "//button[.//span[text()='ویترین']]"
             vitrin_tab = wait.until(EC.element_to_be_clickable((By.XPATH, vitrin_tab_xpath)))
             self.driver.execute_script("arguments[0].click();", vitrin_tab)
             
-            time.sleep(2)
+            time.sleep(0.5)
             dummy_search_trigger_xpath = "//*[text()='جستجو' or contains(@placeholder, 'جستجو')]"
             dummy_search_trigger = wait.until(EC.element_to_be_clickable((By.XPATH, dummy_search_trigger_xpath)))
             self.driver.execute_script("arguments[0].click();", dummy_search_trigger)
 
-            time.sleep(2)  
+            time.sleep(0.5)  
             
-            # Find the actual search input
             actual_search_input_xpath = "//input[contains(@placeholder, 'جستجوی کاربر') or @type='text']"
+            wait.until(EC.presence_of_element_located((By.XPATH, actual_search_input_xpath)))
             search_inputs = self.driver.find_elements(By.XPATH, actual_search_input_xpath)
             
-            # Filter out the ghost elements by finding the one that is physically displayed
             actual_search_input = None
             for inp in search_inputs:
                 if inp.is_displayed():
@@ -57,25 +49,24 @@ class RubinoScraper(BaseScraper):
                 raise Exception("Search input box not found or not visible.")
 
             self.driver.execute_script("arguments[0].focus(); arguments[0].click();", actual_search_input)
-            time.sleep(2)
             actual_search_input.clear()
             actual_search_input.send_keys(self.target)
             actual_search_input.send_keys(Keys.ENTER)
             
-            time.sleep(3)
+            time.sleep(1.5)
 
             exact_result_xpath = f"//div[contains(text(), '{self.target}')] | //span[contains(text(), '{self.target}')]"
             target_profile_item = wait.until(EC.presence_of_element_located((By.XPATH, exact_result_xpath)))
             self.driver.execute_script("arguments[0].click();", target_profile_item)
 
-            time.sleep(3)
+            time.sleep(1.5)
             print(f"[+] Reached profile @{self.target}.")
             return True
 
         except Exception as e:
             print(f"[!] Error when trying to navigate_to_page: {str(e)}")
             self.driver.get("https://m.rubika.ir/")
-            time.sleep(4)
+            time.sleep(2)
             return False
         
     def _find_scrollable_ancestor(self):
@@ -91,20 +82,23 @@ class RubinoScraper(BaseScraper):
             """
         )
 
-    def scroll_and_load_posts(self, scroll_cycles=5, pause_time=2.0):
+    def scroll_and_load_posts(self, scroll_cycles=2, pause_time=1.0):
+        """
+        Optimized scroll cycles down from 5 to 2, expanding step distance for faster loads.
+        """
         container = self._find_scrollable_ancestor()
 
         if container is None:
             for i in range(scroll_cycles):
-                self.driver.execute_script("window.scrollBy({top: 250, behavior: 'smooth'});")
+                self.driver.execute_script("window.scrollBy({top: 350, behavior: 'smooth'});")
                 time.sleep(pause_time)
             return
 
         for i in range(scroll_cycles):
-            self.driver.execute_script("arguments[0].scrollBy({top: 250, behavior: 'smooth'});", container)
+            self.driver.execute_script("arguments[0].scrollBy({top: 350, behavior: 'smooth'});", container)
             time.sleep(pause_time)
 
-    def _wait_for_post_images_loaded(self, timeout=15):
+    def _wait_for_post_images_loaded(self, timeout=10):
         WebDriverWait(self.driver, timeout).until(
             lambda d: d.execute_script(
                 """
@@ -116,7 +110,10 @@ class RubinoScraper(BaseScraper):
         )
 
     def find_post_tiles(self):
-        self._wait_for_post_images_loaded()
+        try:
+            self._wait_for_post_images_loaded()
+        except Exception:
+            pass # Keep moving if images take too long but placeholders are clickable
 
         xpath = (
             "//div[@width and @height]"
@@ -176,14 +173,10 @@ class RubinoScraper(BaseScraper):
         return len(self.find_post_tiles())
 
     def scrape_all_posts(self, max_posts=None):
-        """
-        Implementation of the abstract method.
-        Yields a list of dictionaries to be saved by BaseScraper.
-        """
         seen_srcs = set()
         results = []
         stagnant_rounds = 0
-        max_stagnant_rounds = 3
+        max_stagnant_rounds = 2 # Reduced to terminate faster on empty profiles
 
         while True:
             if max_posts is not None and len(results) >= max_posts:
@@ -205,9 +198,9 @@ class RubinoScraper(BaseScraper):
             if target_index is None:
                 stagnant_rounds += 1
                 if stagnant_rounds >= max_stagnant_rounds:
-                    print("[*] No new Post found, Exiting.")
+                    print("[*] No new posts found. Finishing extraction.")
                     break
-                self.scroll_and_load_posts(scroll_cycles=2, pause_time=1.5)
+                self.scroll_and_load_posts(scroll_cycles=1, pause_time=1.0)
                 continue
 
             stagnant_rounds = 0
@@ -232,7 +225,7 @@ class RubinoScraper(BaseScraper):
         for attempt in range(1, attempts + 1):
             tiles = self.find_post_tiles()
             if not tiles or index >= len(tiles):
-                time.sleep(1)
+                time.sleep(0.3)
                 continue
 
             target_tile = tiles[index]
@@ -240,33 +233,24 @@ class RubinoScraper(BaseScraper):
                 target_tile.click()
                 return True
             except (ElementClickInterceptedException, StaleElementReferenceException):
-                time.sleep(0.5)
+                time.sleep(0.2)
 
         return False
 
     def open_post_by_index(self, index):
-        wait = WebDriverWait(self.driver, 15)
         try:
-            wait.until(EC.presence_of_element_located((By.XPATH, "//img[contains(@src, '/picture/')]")))
-            time.sleep(1)
-
-            success = self._click_tile_with_retry(index, attempts=5)
+            success = self._click_tile_with_retry(index, attempts=3)
             if not success:
                 return False
 
-            try:
-                WebDriverWait(self.driver, 6).until(
-                    lambda d: (
-                        "لایک" in d.execute_script("return document.body.innerText;") or
-                        "مشاهده" in d.execute_script("return document.body.innerText;")
-                    )
+            WebDriverWait(self.driver, 4).until(
+                lambda d: (
+                    "لایک" in d.execute_script("return document.body.innerText;") or
+                    "مشاهده" in d.execute_script("return document.body.innerText;")
                 )
-            except Exception:
-                return False
-
-            time.sleep(1)
+            )
+            time.sleep(0.4)
             return True
-
         except Exception:
             return False
 
@@ -288,35 +272,27 @@ class RubinoScraper(BaseScraper):
 
             if not visible_candidates:
                 self.driver.back()
-                time.sleep(2)
+                time.sleep(0.8)
                 return
 
             back_button = visible_candidates[0]
             try:
                 self.driver.execute_script("arguments[0].click();", back_button)
-                time.sleep(2)
+                time.sleep(0.8)
             except Exception:
                 self.driver.back()
-                time.sleep(2)
-
+                time.sleep(0.8)
         except Exception:
             self.driver.back()
-            time.sleep(2)
+            time.sleep(0.8)
 
     def _parse_engagement_text(self, text_content):
-        price_match = re.search(
-            r"قیمت\s*[:：]?\s*([\d,]+|[\u06f0-\u06f9,]+)",
-            text_content,
-        )
+        price_match = re.search(r"قیمت\s*[:：]?\s*([\d,]+|[\u06f0-\u06f9,]+)", text_content)
         if not price_match:
-            price_match = re.search(
-                r"([\d,]+|[\u06f0-\u06f9,]+)\s*(تومان|تومانی|هزار|ریال)",
-                text_content,
-            )
+            price_match = re.search(r"([\d,]+|[\u06f0-\u06f9,]+)\s*(تومان|تومانی|هزار|ریال)", text_content)
         price = price_match.group(1).replace(",", "") if price_match else "None"
 
         if price != "None":
-            # Accessing the universal method from BaseScraper
             price = self._convert_persian_nums(price)
 
         likes_match = re.search(r"([\d۰-۹,]+)\s*(لایک|مشاهده)", text_content)
@@ -337,26 +313,3 @@ class RubinoScraper(BaseScraper):
         soup = BeautifulSoup(self.driver.page_source, "html.parser")
         text_content = soup.get_text(separator=" ")
         return self._parse_engagement_text(text_content)
-
-    def extract_post_data(self):
-        soup = BeautifulSoup(self.driver.page_source, "html.parser")
-        products = []
-
-        all_containers = soup.find_all("div", attrs={"width": "100%", "display": "flex"})
-
-        valid_posts = []
-        for container in all_containers:
-            text = container.get_text()
-            if re.search(r"(لایک|مشاهده|کامنت)", text) and container not in valid_posts:
-                valid_posts.append(container)
-
-        for idx, post in enumerate(valid_posts):
-            try:
-                text_content = post.get_text(separator=" ")
-                parsed = self._parse_engagement_text(text_content)
-                parsed["post_index"] = idx + 1
-                products.append(parsed)
-            except Exception:
-                continue
-
-        return products
