@@ -1,0 +1,21 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+ENV/
+
+# Chrome Profiles & Webdrivers (Isolated Browser States)
+chrome_profile_*
+chromedriver
+chromedriver.exe
+
+# Scraped Data Output Directory
+data/
+
+# IDE / Editor Configurations
+.vscode/
+.idea/
+.DS_Store
