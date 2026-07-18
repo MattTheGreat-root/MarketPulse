@@ -1,35 +1,40 @@
+import os
 import pandas as pd
-import matplotlib.pyplot as plt
-from sklearn.linear_model import LinearRegression
+import glob
 
-class Analyzer:
-    def __init__(self, path):
-        self.path = path
+class MarketAnalyzer:
+    def __init__(self, data_dir="data"):
+        self.data_dir = data_dir
 
-    def run(self):
-        # Prepare data
-        df = pd.read_csv(self.path)
-        df['price'] = pd.to_numeric(df['price'], errors='coerce')
-        df.dropna(subset=['price'], inplace=True)
-        
-        df['bazkhord'] = df['likes'] + df['comments']
-        df.sort_values('price', inplace=True)
+    def _get_latest_file(self, target_username: str) -> str:
+        """
+        Finds the most recently created CSV file for a given target.
+        """
+        search_pattern = os.path.join(self.data_dir, f"{target_username}_*.csv")
+        files = glob.glob(search_pattern)
+        if not files:
+            raise FileNotFoundError(f"No scraped data found for target: {target_username}")
+        # Sort files by creation time
+        return max(files, key=os.path.getctime)
 
-        X, y = df[['price']], df['bazkhord']
+    def calculate_trends(self, target_username: str, like_weight=1.0, comment_weight=5.0, top_n=5):
+        file_path = self._get_latest_file(target_username)
+        print(f"[*] Analyzing latest data from: {os.path.basename(file_path)}")
         
-        # Train model
-        model = LinearRegression().fit(X, y)
-        coef = model.coef_[0]
+        df = pd.read_csv(file_path)
         
-        print(f"Slope: {coef:.4f} | R2: {model.score(X, y):.4f}")
-        
-        if coef != 0:
-            rel = "+" if coef > 0 else "-"
-            print(f"Result: + price -> {rel} bazkhord.")
+        if df.empty:
+            print("[!] The data file is empty.")
+            return pd.DataFrame()
 
-        # Plot
-        plt.scatter(df['price'], y, label="Data")
-        plt.plot(df['price'], model.predict(X), color="red", label="Fit")
-        plt.title("Price vs Bazkhord")
-        plt.legend()
-        plt.show()
+        # BULLETPROOF PRICE CLEANING:
+        # Convert to string, extract only digits, convert to float.
+        # If no digits are found (or it was 'None'), it safely becomes NaN.
+        df['price'] = df['price'].astype(str).str.extract(r'(\d+)')[0].astype(float)
+
+        # Calculate raw engagement score
+        df['engagement_score'] = (df['likes'] * like_weight) + (df['comments'] * comment_weight)
+        
+        trending_df = df.sort_values(by='engagement_score', ascending=False).head(top_n)
+        
+        return trending_df

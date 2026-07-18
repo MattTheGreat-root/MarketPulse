@@ -1,8 +1,13 @@
-import argparse
 import sys
+import os
+
+# Force Python to recognize the MarketPulse root directory
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from core.browser_manager import BrowserManager
 from auth.rubino_auth import RubikaAuth
 from platforms.rubino_scraper import RubinoScraper
+from core.analyzer import MarketAnalyzer
 
 def print_banner():
     print("""
@@ -12,38 +17,51 @@ def print_banner():
     """)
 
 def main():
-    parser = argparse.ArgumentParser(description="MarketPulse Multi-Platform Scraper")
-    parser.add_argument('--platform', type=str, choices=['rubino'], required=True, help="Target platform to scrape (e.g., rubino)")
-    parser.add_argument('--target', type=str, required=True, help="Target username or channel ID")
-    parser.add_argument('--max-posts', type=int, default=None, help="Maximum number of posts to scrape")
-    
-    args = parser.parse_args()
     print_banner()
 
-    if args.platform == 'rubino':
-        print(f"[*] Initializing pipeline for Rubino target: @{args.target}")
+    # 1. Interactive Inputs
+    target_username = input("[?] Enter the target Rubino username (without @): ").strip()
+    if not target_username:
+        print("[!] Username cannot be empty. Exiting.")
+        sys.exit(1)
+
+    max_posts_input = input("[?] Max posts to scrape (press ENTER to scrape all): ").strip()
+    max_posts = int(max_posts_input) if max_posts_input.isdigit() else None
+
+    print(f"\n[*] Initializing pipeline for Rubino target: @{target_username}")
+    
+    # Tier 1: Driver Factory
+    manager = BrowserManager(platform_name="rubino")
+    raw_driver = manager.get_driver()
+    
+    try:
+        # Tier 2: Authentication Strategy
+        auth = RubikaAuth(driver=raw_driver)
+        authenticated_driver = auth.verify_session()
         
-        # Tier 1: Driver Factory
-        manager = BrowserManager(platform_name="rubino")
-        raw_driver = manager.get_driver()
+        # Tier 3: Scraping Strategy
+        scraper = RubinoScraper(driver=authenticated_driver, target=target_username)
+        scraper.run(max_posts=max_posts)
         
-        try:
-            # Tier 2: Authentication Strategy
-            auth = RubikaAuth(driver=raw_driver)
-            authenticated_driver = auth.verify_session()
+        # Tier 4: Analysis Strategy (Runs automatically after scraping)
+        analyzer = MarketAnalyzer()
+        trends = analyzer.calculate_trends(target_username=target_username, top_n=5)
+        
+        if not trends.empty:
+            print("\n================ TOP TRENDING POSTS ================")
+            print(trends[['post_index', 'price', 'likes', 'comments', 'engagement_score']].to_string(index=False))
+            print("====================================================")
+        else:
+            print("\n[!] No trend data could be calculated.")
             
-            # Tier 3: Scraping Strategy
-            scraper = RubinoScraper(driver=authenticated_driver, target=args.target)
-            scraper.run(max_posts=args.max_posts)
-            
-        except KeyboardInterrupt:
-            print("\n[!] Pipeline interrupted by user.")
-        except Exception as e:
-            print(f"\n[!] Pipeline encountered a fatal error: {e}")
-        finally:
-            print("[*] Closing browser session and cleaning up.")
-            raw_driver.quit()
-            sys.exit(0)
+    except KeyboardInterrupt:
+        print("\n[!] Pipeline interrupted by user.")
+    except Exception as e:
+        print(f"\n[!] Pipeline encountered a fatal error: {e}")
+    finally:
+        print("[*] Closing browser session and cleaning up.")
+        raw_driver.quit()
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()

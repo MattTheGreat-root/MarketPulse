@@ -287,26 +287,51 @@ class RubinoScraper(BaseScraper):
             time.sleep(0.8)
 
     def _parse_engagement_text(self, text_content):
-        price_match = re.search(r"قیمت\s*[:：]?\s*([\d,]+|[\u06f0-\u06f9,]+)", text_content)
+        # 1. Neutralize invisible characters and Arabic variants
+        text_content = text_content.replace('ي', 'ی').replace('ك', 'ک').replace('\u200c', ' ')
+        
+        # 2. Universal number pattern for digits (handles dots, slashes, and commas)
+        number_pattern = r"([\d\u0660-\u0669\u06f0-\u06f9,\./]+)"
+        
+        # 3. Look for price keywords followed by the number
+        price_match = re.search(r"(?:قیمت|مبلغ|بها)\s*[:：-]?\s*" + number_pattern, text_content)
+        
         if not price_match:
-            price_match = re.search(r"([\d,]+|[\u06f0-\u06f9,]+)\s*(تومان|تومانی|هزار|ریال)", text_content)
-        price = price_match.group(1).replace(",", "") if price_match else "None"
+            # Fallback: Number immediately followed by a currency word
+            price_match = re.search(number_pattern + r"\s*(?:تومان|تومانی|هزار|میلیون|ریال|T|t)", text_content)
+            
+        price = "None"
+        if price_match:
+            raw_price = price_match.group(1)
+            # Strip out formatting symbols
+            clean_price = re.sub(r"[,/\.]", "", raw_price)
+            
+            if clean_price:
+                price = self._convert_persian_nums(clean_price)
+                
+                # --- The Multiplier Logic ---
+                # Check the immediate 15 characters after the number to catch "هزار" or "میلیون"
+                end_idx = price_match.end()
+                context = text_content[end_idx : end_idx + 15].lower()
+                
+                if 'هزار' in context or 'k' in context:
+                    price = str(int(price) * 1000)
+                elif 'میلیون' in context or 'm' in context:
+                    price = str(int(price) * 1000000)
 
-        if price != "None":
-            price = self._convert_persian_nums(price)
+        # Extract Likes & Comments with the same robust character handling
+        likes_match = re.search(r"([\d\u0660-\u0669\u06f0-\u06f9,\./]+)\s*(?:لایک|مشاهده)", text_content)
+        likes = likes_match.group(1) if likes_match else "0"
+        likes = int(self._convert_persian_nums(re.sub(r"[,/\.]", "", likes))) if likes != "0" else 0
 
-        likes_match = re.search(r"([\d۰-۹,]+)\s*(لایک|مشاهده)", text_content)
-        likes = likes_match.group(1).replace(",", "") if likes_match else "0"
-        likes = self._convert_persian_nums(likes)
-
-        comments_match = re.search(r"([\d۰-۹,]+)\s*کامنت", text_content)
-        comments = comments_match.group(1).replace(",", "") if comments_match else "0"
-        comments = self._convert_persian_nums(comments)
+        comments_match = re.search(r"([\d\u0660-\u0669\u06f0-\u06f9,\./]+)\s*کامنت", text_content)
+        comments = comments_match.group(1) if comments_match else "0"
+        comments = int(self._convert_persian_nums(re.sub(r"[,/\.]", "", comments))) if comments != "0" else 0
 
         return {
             "price": price if price != "None" else "None",
-            "likes": int(likes) if likes.isdigit() else 0,
-            "comments": int(comments) if comments.isdigit() else 0,
+            "likes": likes,
+            "comments": comments,
         }
 
     def extract_single_post_data(self):
