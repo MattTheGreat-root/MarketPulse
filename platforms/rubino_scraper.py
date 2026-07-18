@@ -287,46 +287,50 @@ class RubinoScraper(BaseScraper):
             time.sleep(0.8)
 
     def _parse_engagement_text(self, text_content):
-        # 1. Neutralize invisible characters and Arabic variants
-        text_content = text_content.replace('ي', 'ی').replace('ك', 'ک').replace('\u200c', ' ')
+        # 1. Neutralize all invisible characters and Arabic-variants
+        text = text_content.replace('ي', 'ی').replace('ك', 'ک').replace('\u200c', ' ')
         
-        # 2. Universal number pattern for digits (handles dots, slashes, and commas)
-        number_pattern = r"([\d\u0660-\u0669\u06f0-\u06f9,\./]+)"
+        # 2. Universal number pattern (Includes Persian digits, commas, dots, slashes, and Persian commas)
+        num_pattern = r"([\d\u0660-\u0669\u06f0-\u06f9,\./،]+)"
         
-        # 3. Look for price keywords followed by the number
-        price_match = re.search(r"(?:قیمت|مبلغ|بها)\s*[:：-]?\s*" + number_pattern, text_content)
+        # STRATEGY A: Find keywords ("قیمت", "مبلغ", "سرویس") followed by a number within 25 characters
+        # [^\d...] ensures we gracefully skip over emojis, spaces, and colons until we hit the number
+        match_a = re.search(r"(?:قیمت|مبلغ|بها|سرویس)[^\d\u0660-\u0669\u06f0-\u06f9]{0,25}?" + num_pattern, text)
         
-        if not price_match:
-            # Fallback: Number immediately followed by a currency word
-            price_match = re.search(number_pattern + r"\s*(?:تومان|تومانی|هزار|میلیون|ریال|T|t)", text_content)
-            
+        # STRATEGY B: Fallback - Find ANY number immediately followed by currency words
+        match_b = re.search(num_pattern + r"\s*(?:تومان|تومانی|هزار|میلیون|ریال|T|t)", text)
+        
+        # Pick the best extraction
+        best_match = match_a if match_a else match_b
+        
         price = "None"
-        if price_match:
-            raw_price = price_match.group(1)
-            # Strip out formatting symbols
-            clean_price = re.sub(r"[,/\.]", "", raw_price)
+        if best_match:
+            # group(1) guarantees we are ONLY extracting the number, ignoring the words around it
+            raw_price = best_match.group(1)
+            clean = re.sub(r"[,/\.،]", "", raw_price)
             
-            if clean_price:
-                price = self._convert_persian_nums(clean_price)
+            if clean:
+                price = self._convert_persian_nums(clean)
                 
-                # --- The Multiplier Logic ---
-                # Check the immediate 15 characters after the number to catch "هزار" or "میلیون"
-                end_idx = price_match.end()
-                context = text_content[end_idx : end_idx + 15].lower()
+                # MULTIPLIER LOGIC: Lock the context window strictly to the 25 chars AFTER the number
+                end_idx = best_match.end(1) 
+                context = text[end_idx : end_idx + 25].lower()
                 
-                if 'هزار' in context or 'k' in context:
-                    price = str(int(price) * 1000)
+                if 'میلیارد' in context:
+                    price = str(int(price) * 1000000000)
                 elif 'میلیون' in context or 'm' in context:
                     price = str(int(price) * 1000000)
+                elif 'هزار' in context or 'k' in context:
+                    price = str(int(price) * 1000)
 
-        # Extract Likes & Comments with the same robust character handling
-        likes_match = re.search(r"([\d\u0660-\u0669\u06f0-\u06f9,\./]+)\s*(?:لایک|مشاهده)", text_content)
+        # Extract Likes & Comments safely
+        likes_match = re.search(r"([\d\u0660-\u0669\u06f0-\u06f9,\./،]+)\s*(?:لایک|مشاهده)", text)
         likes = likes_match.group(1) if likes_match else "0"
-        likes = int(self._convert_persian_nums(re.sub(r"[,/\.]", "", likes))) if likes != "0" else 0
+        likes = int(self._convert_persian_nums(re.sub(r"[,/\.،]", "", likes))) if likes != "0" else 0
 
-        comments_match = re.search(r"([\d\u0660-\u0669\u06f0-\u06f9,\./]+)\s*کامنت", text_content)
+        comments_match = re.search(r"([\d\u0660-\u0669\u06f0-\u06f9,\./،]+)\s*کامنت", text)
         comments = comments_match.group(1) if comments_match else "0"
-        comments = int(self._convert_persian_nums(re.sub(r"[,/\.]", "", comments))) if comments != "0" else 0
+        comments = int(self._convert_persian_nums(re.sub(r"[,/\.،]", "", comments))) if comments != "0" else 0
 
         return {
             "price": price if price != "None" else "None",
