@@ -3,7 +3,6 @@ import os
 import json
 import pandas as pd
 from dotenv import load_dotenv
-from core.report_generator import ReportGenerator
 
 # Load environment variables from the .env file in the root directory
 load_dotenv()
@@ -15,6 +14,8 @@ from core.browser_manager import BrowserManager
 from auth.rubino_auth import RubikaAuth
 from platforms.rubino_scraper import RubinoScraper
 from core.analyzer import MarketAnalyzer
+from core.report_generator import ReportGenerator
+from core.packager import ClientPackager
 
 def print_banner():
     print("""
@@ -36,6 +37,9 @@ def main():
     mode = input("[?] Do you want to scrape new data? (y/n - 'n' will only analyze the latest file): ").strip().lower()
     make_pdf_input = input("[?] Do you want to generate a PDF report alongside the Markdown? (y/n): ").strip().lower()
     make_pdf = (make_pdf_input == 'y')
+    
+    make_zip_input = input("[?] Do you want to package the PDF and Excel data into a deliverable .zip file? (y/n): ").strip().lower()
+    make_zip = (make_zip_input == 'y')
     
     raw_driver = None
 
@@ -64,7 +68,7 @@ def main():
         analyzer = MarketAnalyzer()
         trends, outliers = analyzer.calculate_trends(target_username=target_username, top_n=5)
         
-        bi_results_map = {} # We will store the AI output here to pass to the report generator
+        bi_results_map = {}
 
         if not outliers.empty:
             print("\n================ VIRAL OUTLIERS (PINNED/ADS) ================")
@@ -95,7 +99,6 @@ def main():
                 else:
                     print(f"  -> [+] AI analysis complete.")
                     
-                # Save the result into our dictionary using the post_index as the key
                 bi_results_map[post_id] = bi_data
                     
             print("\n============================================================")
@@ -111,8 +114,16 @@ def main():
             trends=trends, 
             outliers=outliers, 
             bi_results=bi_results_map,
-            make_pdf=make_pdf  # Pass the user's choice to the generator
+            make_pdf=make_pdf
         )
+
+        # Tier 6: Client Delivery Strategy
+        if make_zip:
+            if not make_pdf:
+                print("\n[!] Warning: You requested a zip package but did not generate a PDF. The zip will only contain the Excel file.")
+            
+            packager = ClientPackager()
+            packager.package_deliverables(target_username=target_username)
 
     except FileNotFoundError as e:
         print(f"\n[!] {e}")
@@ -120,6 +131,8 @@ def main():
     except KeyboardInterrupt:
         print("\n[!] Pipeline interrupted by user.")
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"\n[!] Pipeline encountered a fatal error: {e}")
     finally:
         if raw_driver:

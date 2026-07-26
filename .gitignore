@@ -15,6 +15,7 @@ chromedriver.exe
 # Scraped Data Output Directory
 data/
 reports/
+deliverables/
 
 # IDE / Editor Configurations
 .vscode/
