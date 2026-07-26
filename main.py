@@ -49,10 +49,12 @@ def main():
         
         if not trends.empty:
             print("\n================ TOP TRENDING POSTS ================")
-            print(trends[['post_index', 'price', 'likes', 'comments', 'engagement_score']].to_string(index=False))
+            display_cols = [c for c in ['post_index', 'price', 'engagement'] if c in trends.columns]
+            print(trends[display_cols].to_string(index=False))
             print("====================================================")
         else:
             print("\n[!] No trend data could be calculated.")
+
             
     except KeyboardInterrupt:
         print("\n[!] Pipeline interrupted by user.")

@@ -209,9 +209,18 @@ class RubinoScraper(BaseScraper):
             if self.open_post_by_index(target_index):
                 data = self.extract_single_post_data()
                 if data:
-                    data["post_index"] = len(results) + 1
-                    results.append(data)
-                    print(f"[+] Scraped {len(results)}: {data}")
+                    # Enforce final column order: post_index, description, price, engagement, comments
+                    ordered = {
+                        "post_index": len(results) + 1,
+                        "description": data.get("description", ""),
+                        "price": data.get("price", "None"),
+                        "engagement": data.get("engagement", 0),
+                        "comments": data.get("comments", ""),
+                    }
+                    results.append(ordered)
+                    print(f"[+] Scraped {len(results)}: post_index={ordered['post_index']} "
+                          f"price={ordered['price']} engagement={ordered['engagement']}")
+
                 self.go_back_to_grid()
 
         return results
@@ -308,29 +317,31 @@ class RubinoScraper(BaseScraper):
             # group(1) guarantees we are ONLY extracting the number, ignoring the words around it
             raw_price = best_match.group(1)
             clean = re.sub(r"[,/\.،]", "", raw_price)
-            
-            if clean:
-                price = self._convert_persian_nums(clean)
-                
-                # MULTIPLIER LOGIC: Lock the context window strictly to the 25 chars AFTER the number
-                end_idx = best_match.end(1) 
-                context = text[end_idx : end_idx + 25].lower()
-                
-                if 'میلیارد' in context:
-                    price = str(int(price) * 1000000000)
-                elif 'میلیون' in context or 'm' in context:
-                    price = str(int(price) * 1000000)
-                elif 'هزار' in context or 'k' in context:
-                    price = str(int(price) * 1000)
+            price_int = self._safe_int(self._convert_persian_nums(clean))
 
-        # Extract Likes & Comments safely
+            # Only treat as a valid price if we actually parsed a number.
+            if price_int is not None:
+                # MULTIPLIER LOGIC: Lock the context window strictly to the 25 chars AFTER the number
+                end_idx = best_match.end(1)
+                context = text[end_idx : end_idx + 25].lower()
+
+                if 'میلیارد' in context:
+                    price_int *= 1000000000
+                elif 'میلیون' in context or 'm' in context:
+                    price_int *= 1000000
+                elif 'هزار' in context or 'k' in context:
+                    price_int *= 1000
+
+                price = str(price_int)
+
+        # Extract Likes & Comments safely (never raise on malformed text)
         likes_match = re.search(r"([\d\u0660-\u0669\u06f0-\u06f9,\./،]+)\s*(?:لایک|مشاهده)", text)
-        likes = likes_match.group(1) if likes_match else "0"
-        likes = int(self._convert_persian_nums(re.sub(r"[,/\.،]", "", likes))) if likes != "0" else 0
+        likes_raw = self._convert_persian_nums(re.sub(r"[,/\.،]", "", likes_match.group(1))) if likes_match else ""
+        likes = self._safe_int(likes_raw) or 0
 
         comments_match = re.search(r"([\d\u0660-\u0669\u06f0-\u06f9,\./،]+)\s*کامنت", text)
-        comments = comments_match.group(1) if comments_match else "0"
-        comments = int(self._convert_persian_nums(re.sub(r"[,/\.،]", "", comments))) if comments != "0" else 0
+        comments_raw = self._convert_persian_nums(re.sub(r"[,/\.،]", "", comments_match.group(1))) if comments_match else ""
+        comments = self._safe_int(comments_raw) or 0
 
         return {
             "price": price if price != "None" else "None",
@@ -338,7 +349,241 @@ class RubinoScraper(BaseScraper):
             "comments": comments,
         }
 
+    @staticmethod
+    def _safe_int(value):
+        """
+        Best-effort int conversion. Strips any non-digit characters and returns
+        None if nothing numeric remains, so callers never hit `int('')` crashes.
+        """
+        if value is None:
+            return None
+        digits = re.sub(r"\D", "", str(value))
+        if not digits:
+            return None
+        try:
+            return int(digits)
+        except (ValueError, TypeError):
+            return None
+
+
+    def _open_comment_section(self):
+        try:
+            target = self.driver.execute_script(
+                """
+                let paths = document.querySelectorAll("path[d^='M2.678 11.894']");
+                let visible = [];
+                for (let p of paths) {
+                    let svg = p.closest('svg');
+                    if (!svg) continue;
+                    let rect = svg.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.left < window.innerWidth) {
+                        visible.push(svg);
+                    }
+                }
+                if (visible.length === 0) return null;
+                
+                let start = visible[visible.length - 1]; 
+                let node = start.parentElement;
+                let depth = 0;
+                
+                while (node && node !== document.body && depth < 4) {
+                    if (window.getComputedStyle(node).cursor === 'pointer' || node.tagName === 'BUTTON') {
+                        return node;
+                    }
+                    node = node.parentElement;
+                    depth++;
+                }
+                return start;
+                """
+            )
+
+            if not target:
+                return False
+
+            self.driver.execute_script(
+                """
+                let el = arguments[0];
+                el.scrollIntoView({block: 'center'});
+                el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
+                """,
+                target,
+            )
+
+            try:
+                # FIX: Wait for EITHER the RTL or LTR comment container to appear
+                WebDriverWait(self.driver, 2.5).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.rtl-5lyezw, div.rtl-15m2bl8"))
+                )
+            except Exception:
+                pass
+                
+            time.sleep(0.5)
+            return True
+        except Exception:
+            return False
+
+    def _find_comments_scrollable(self):
+        return self.driver.execute_script(
+            """
+            // FIX: Search for either comment class to find the scrollable container
+            let row = document.querySelector('div.rtl-5lyezw, div.rtl-15m2bl8');
+            if (!row) return null;
+            let node = row.parentElement;
+            while (node && node !== document.body) {
+                let style = window.getComputedStyle(node);
+                if ((style.overflowY === 'auto' || style.overflowY === 'scroll')
+                    && node.scrollHeight > node.clientHeight) {
+                    return node;
+                }
+                node = node.parentElement;
+            }
+            return null;
+            """
+        )
+
+    def _scroll_comments(self, pause_time=1.0):
+        container = self._find_comments_scrollable()
+        if container is not None:
+            self.driver.execute_script(
+                "arguments[0].scrollBy({top: 400, behavior: 'smooth'});", container
+            )
+        else:
+            self.driver.execute_script("window.scrollBy({top: 400, behavior: 'smooth'});")
+        time.sleep(pause_time)
+
+    def _collect_comments_and_desc(self, max_comments=10):
+        description = ""
+        comments = []
+        seen = set()
+
+        if not self._open_comment_section():
+            return description, comments
+
+        stagnant_rounds = 0
+        max_stagnant_rounds = 3
+
+        while len(comments) < max_comments and stagnant_rounds < max_stagnant_rounds:
+            # Grab all rows that are either RTL or LTR comments (and the caption)
+            rows = self.driver.find_elements(By.CSS_SELECTOR, "div.rtl-5lyezw, div.rtl-15m2bl8")
+            
+            if not rows:
+                break
+                
+            before = len(comments)
+
+            for row in rows:
+                # FILTER: Real comments have a timestamp/reply block (rtl-1um1bzv). The caption does not.
+                try:
+                    reply_block = row.find_elements(By.CSS_SELECTOR, "div.rtl-1um1bzv")
+                    is_caption = len(reply_block) == 0
+                except Exception:
+                    is_caption = False
+
+                try:
+                    user = row.find_element(By.CSS_SELECTOR, "span.rtl-19gb1ua").text.strip()
+                except Exception:
+                    user = ""
+                try:
+                    text = row.find_element(By.CSS_SELECTOR, "span.rtl-1br88u2").text.strip()
+                except Exception:
+                    text = ""
+
+                if not text:
+                    continue
+
+                # If it's the caption, save it to the description variable and skip adding to comments
+                if is_caption:
+                    if not description:
+                        description = text
+                    continue
+
+                # Process as a normal comment
+                key = (user, text)
+                if key in seen or not (user or text):
+                    continue
+
+                seen.add(key)
+                comments.append(f"{user}: {text}" if user else text)
+                if len(comments) >= max_comments:
+                    break
+
+            if len(comments) >= max_comments:
+                break
+
+            if len(comments) == before:
+                stagnant_rounds += 1
+            else:
+                stagnant_rounds = 0
+
+            self._scroll_comments(pause_time=1.0)
+
+        self._close_comment_section()
+        return description, comments[:max_comments]
+    
+    def _close_comment_section(self):
+        max_attempts = 3
+        
+        for _ in range(max_attempts):
+            # FIX: Check if either LTR or RTL comment rows still exist on screen
+            comments_open = self.driver.execute_script(
+                "return document.querySelectorAll('div.rtl-5lyezw, div.rtl-15m2bl8').length > 0;"
+            )
+            
+            if not comments_open:
+                time.sleep(0.4)
+                return
+
+            try:
+                candidates = self.driver.find_elements(By.XPATH, "//div[contains(@class, 'rtl-1x9eqjj')]")
+                visible_flags = self.driver.execute_script(
+                    """
+                    let els = arguments[0];
+                    return els.map(el => {
+                        let rect = el.getBoundingClientRect();
+                        return rect.width > 0 && rect.height > 0 &&
+                            rect.left >= -1 && rect.left < window.innerWidth;
+                    });
+                    """,
+                    candidates,
+                )
+                visible = [el for el, ok in zip(candidates, visible_flags) if ok]
+
+                if visible:
+                    self.driver.execute_script("arguments[0].click();", visible[-1])
+                else:
+                    self.driver.back()
+                    
+            except Exception:
+                self.driver.back()
+            
+            time.sleep(0.8)
+
+        try:
+            # FIX: Ensure both classes are gone before moving on
+            WebDriverWait(self.driver, 2).until_not(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div.rtl-5lyezw, div.rtl-15m2bl8"))
+            )
+        except Exception:
+            pass
+
     def extract_single_post_data(self):
-        soup = BeautifulSoup(self.driver.page_source, "html.parser")
-        text_content = soup.get_text(separator=" ")
-        return self._parse_engagement_text(text_content)
+        # 1. Open comments first to get the full, un-truncated description and the comments
+        description, comment_list = self._collect_comments_and_desc(max_comments=10)
+
+        # 2. Get the main post view text (for the likes and total comments count)
+        text_content = self.driver.execute_script("return document.body.innerText;")
+        
+        # 3. Combine them so the regex can find the price even if it was truncated on the main view
+        combined_text = description + " \n " + text_content
+        engagement_info = self._parse_engagement_text(combined_text)
+
+        likes = self._safe_int(engagement_info.get("likes", 0)) or 0
+        comment_count = self._safe_int(engagement_info.get("comments", 0)) or 0
+        engagement = likes + comment_count
+
+        return {
+            "description": description,
+            "price": engagement_info["price"],
+            "engagement": engagement,
+            "comments": "\n".join(comment_list),
+        }

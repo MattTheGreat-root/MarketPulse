@@ -50,12 +50,14 @@ class BaseScraper(ABC):
     def save_to_csv(self, product_list: list) -> None:
         """
         Universal save method. Dynamically extracts headers from the first dictionary.
+        Writes both a CSV and an XLSX (same base name).
         """
         if not product_list:
             print("[!] No data to save.")
             return
 
-        with open(self.output_path, "w", newline="", encoding="utf-8") as csvfile:
+        # --- CSV ---
+        with open(self.output_path, "w", newline="", encoding="utf-8-sig") as csvfile:
             # Dynamically grab fieldnames from the first item's keys
             fieldnames = list(product_list[0].keys())
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -63,8 +65,60 @@ class BaseScraper(ABC):
             writer.writeheader()
             for product in product_list:
                 writer.writerow(product)
-                
+
         print(f"[+] File CSV saved: {self.output_path}")
+
+        # --- XLSX ---
+        self.save_to_xlsx(product_list)
+
+    def save_to_xlsx(self, product_list: list) -> None:
+        """
+        Saves the same data to an .xlsx file next to the CSV.
+        Uses openpyxl directly to avoid extra dependencies at read time.
+        """
+        if not product_list:
+            return  
+
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, Alignment
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            print("[!] openpyxl not installed; skipping XLSX. Run: pip install openpyxl")
+            return
+
+        xlsx_path = os.path.splitext(self.output_path)[0] + ".xlsx"
+        fieldnames = list(product_list[0].keys())
+
+        wb = Workbook()
+        ws = wb.active or wb.create_sheet()  # active sheet is always present on a new Workbook
+        ws.title = "scraped_data"
+
+
+        # Header row
+        ws.append(fieldnames)
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+
+        # Data rows
+        for product in product_list:
+            ws.append([product.get(key, "") for key in fieldnames])
+
+        # Formatting: wrap long text columns and set sensible widths
+        wrap = Alignment(wrap_text=True, vertical="top")
+        for i, name in enumerate(fieldnames, start=1):
+            col_letter = get_column_letter(i)
+            if name in ("description", "comments"):
+                ws.column_dimensions[col_letter].width = 50
+                for cell in ws[col_letter][1:]:  # skip header
+                    cell.alignment = wrap
+            else:
+                ws.column_dimensions[col_letter].width = 15
+
+        wb.save(xlsx_path)
+        print(f"[+] File XLSX saved: {xlsx_path}")
+
+
 
     def run(self, max_posts=None):
         """
