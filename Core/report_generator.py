@@ -1,10 +1,33 @@
 import os
 import html
 from datetime import datetime
+from pathlib import Path
 
 from weasyprint import HTML
 
 from core import charts
+
+# Absolute path to the bundled Vazirmatn fonts so WeasyPrint can embed them
+# in the PDF regardless of the current working directory.
+_FONT_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+
+
+def _font_face_css():
+    reg = (_FONT_DIR / "Vazirmatn-Regular.ttf").as_uri()
+    bold = (_FONT_DIR / "Vazirmatn-Bold.ttf").as_uri()
+    return f"""
+    @font-face {{
+        font-family: 'Vazirmatn';
+        src: url('{reg}') format('truetype');
+        font-weight: normal; font-style: normal;
+    }}
+    @font-face {{
+        font-family: 'Vazirmatn';
+        src: url('{bold}') format('truetype');
+        font-weight: bold; font-style: normal;
+    }}
+    """
+
 
 
 def _fmt_price(value):
@@ -34,6 +57,17 @@ TREND_FA = {
     "stable": "➖ ثابت",
     "n/a": "نامشخص",
 }
+
+# Map bilingual product category labels (e.g. "Bangle (النگو)") to their
+# English part so SVG chart labels shape/render correctly in WeasyPrint.
+def _cat_en(label):
+    if not label:
+        return label
+    s = str(label)
+    if "(" in s:
+        s = s.split("(", 1)[0].strip()
+    return s or str(label)
+
 
 
 class ReportGenerator:
@@ -192,7 +226,8 @@ class ReportGenerator:
         if df is not None and len(df) >= 2:
             ordered = df.sort_values("post_index")
             points = [(f"#{int(r['post_index'])}", r["engagement"]) for _, r in ordered.iterrows()]
-            chart = charts.line_chart(points, title="روند تعامل در طول زمان (قدیمی → جدید)")
+            chart = charts.line_chart(points, title="Engagement Trend (Oldest -> Newest)")
+
 
         momentum = client.get("momentum", {})
         note = ""
@@ -217,13 +252,15 @@ class ReportGenerator:
         if not breakdown:
             return ""
 
-        share_data = [(c["category"], c["posts"]) for c in breakdown]
+        share_data = [(_cat_en(c["category"]), c["posts"]) for c in breakdown]
         eng_data = sorted(
-            [(c["category"], c["avg_engagement"]) for c in breakdown],
+            [(_cat_en(c["category"]), c["avg_engagement"]) for c in breakdown],
             key=lambda x: x[1], reverse=True
         )
-        donut = charts.donut_chart(share_data, title="سهم هر دسته از پست‌ها")
-        bars = charts.bar_chart(eng_data, title="میانگین تعامل بر اساس دسته محصول")
+
+        donut = charts.donut_chart(share_data, title="Post Share by Category")
+        bars = charts.bar_chart(eng_data, title="Avg Engagement by Category")
+
 
         rows = ""
         for c in breakdown:
@@ -266,7 +303,8 @@ class ReportGenerator:
             """
         bands = pricing.get("bands", [])
         band_data = [(b["label"], b["avg_engagement"]) for b in bands if b["posts"] > 0]
-        chart = charts.bar_chart(band_data, title="میانگین تعامل در هر بازه قیمتی (تومان)")
+        chart = charts.bar_chart(band_data, title="Avg Engagement by Price Band (Toman)")
+
 
         best = pricing.get("best_selling_band")
         weighted = _fmt_price(pricing.get("engagement_weighted_avg"))
@@ -302,7 +340,8 @@ class ReportGenerator:
             return ""
 
         perf_data = [(f"#{t['tag']}", t["avg_engagement"]) for t in top_perf[:8]]
-        chart = charts.bar_chart(perf_data, title="پرتعامل‌ترین هشتگ‌ها (میانگین تعامل)") if perf_data else ""
+        chart = charts.bar_chart(perf_data, title="Top Performing Hashtags (Avg Engagement)") if perf_data else ""
+
 
         used_chips = "".join(
             f"<span class='chip'>#{_e(t['tag'])} <b>({t['count']})</b></span>" for t in most_used[:15]
@@ -386,9 +425,10 @@ class ReportGenerator:
         sent = ai.get("sentiment_breakdown", {})
         sent_chart = ""
         if sent:
-            sent_fa = {"positive": "مثبت", "neutral": "خنثی", "negative": "منفی"}
-            data = [(sent_fa.get(k, k), v) for k, v in sent.items()]
-            sent_chart = charts.donut_chart(data, title="احساسات کلی کامنت‌ها")
+            sent_en = {"positive": "Positive", "neutral": "Neutral", "negative": "Negative"}
+            data = [(sent_en.get(k, k), v) for k, v in sent.items()]
+            sent_chart = charts.donut_chart(data, title="Overall Comment Sentiment")
+
 
         pr = ai.get("price_resistance_total", 0)
         pr_note = (f"<div class='insight'>📉 مجموع شکایت‌های صریح از بالا بودن قیمت: <b>{pr} مورد</b>.</div>"
@@ -433,9 +473,10 @@ class ReportGenerator:
         names = [client_row["username"]] + [r["username"] for r in comp_rows]
         eng_vals = [client_row["avg_engagement"]] + [r["avg_engagement"] for r in comp_rows]
         eng_chart = charts.grouped_bar_chart(
-            names, [("میانگین تعامل", eng_vals)],
-            title="مقایسه میانگین تعامل با رقبا"
+            names, [("Avg Engagement", eng_vals)],
+            title="Avg Engagement vs Competitors"
         )
+
 
         # Positioning
         pos = comparison.get("positioning", {})
@@ -546,17 +587,19 @@ class ReportGenerator:
 <meta charset="UTF-8">
 <title>{_e(brand)} - گزارش @{_e(username)}</title>
 <style>
+    {_font_face_css()}
     @page {{
         size: A4;
         margin: 1.5cm;
-        @bottom-center {{ content: "صفحه " counter(page) " از " counter(pages); font-size: 9px; color: #999; }}
+        @bottom-center {{ content: "صفحه " counter(page) " از " counter(pages); font-family: 'Vazirmatn', Tahoma, sans-serif; font-size: 9px; color: #999; }}
     }}
     * {{ box-sizing: border-box; }}
     body {{
-        font-family: Tahoma, Arial, sans-serif;
+        font-family: 'Vazirmatn', Tahoma, Arial, sans-serif;
         line-height: 1.9; color: #2d3436; margin: 0;
         font-size: 13px; background: #fff;
     }}
+
     h1, h2, h3 {{ color: #1a2a4a; }}
     h2 {{
         font-size: 19px; border-right: 5px solid #2c6fbb;
