@@ -3,6 +3,7 @@ import os
 import json
 import pandas as pd
 from dotenv import load_dotenv
+from core.report_generator import ReportGenerator
 
 # Load environment variables from the .env file in the root directory
 load_dotenv()
@@ -31,8 +32,10 @@ def main():
         print("[!] Username cannot be empty. Exiting.")
         sys.exit(1)
 
-    # 2. Mode Selection
+    # 2. Mode Selections
     mode = input("[?] Do you want to scrape new data? (y/n - 'n' will only analyze the latest file): ").strip().lower()
+    make_pdf_input = input("[?] Do you want to generate a PDF report alongside the Markdown? (y/n): ").strip().lower()
+    make_pdf = (make_pdf_input == 'y')
     
     raw_driver = None
 
@@ -57,12 +60,12 @@ def main():
         else:
             print(f"\n[*] Skipping scraper. Proceeding directly to analysis for @{target_username}...")
 
-        # Tier 4: Analysis Strategy (Runs for both scrape and analyze-only modes)
+        # Tier 4: Analysis Strategy
         analyzer = MarketAnalyzer()
-        
-        # Unpack both trends and outliers from the IQR filter
         trends, outliers = analyzer.calculate_trends(target_username=target_username, top_n=5)
         
+        bi_results_map = {} # We will store the AI output here to pass to the report generator
+
         if not outliers.empty:
             print("\n================ VIRAL OUTLIERS (PINNED/ADS) ================")
             display_cols = [c for c in ['post_index', 'price', 'engagement'] if c in outliers.columns]
@@ -75,14 +78,12 @@ def main():
             
             print("\n================ AI BUSINESS INTELLIGENCE ================")
             
-            # Loop through all the trending posts in the dataframe
             for index, post in trends.iterrows():
-                post_id = post['post_index']
+                post_id = int(post['post_index'])
                 print(f"\n[*] Analyzing comments for Trending Post (Index: {post_id})...")
                 
                 raw_comments = post.get('comments', '')
                 
-                # Skip the API call if the post has no comments
                 if pd.isna(raw_comments) or not str(raw_comments).strip():
                     print("  -> No comments found to analyze.")
                     continue
@@ -92,12 +93,26 @@ def main():
                 if "error" in bi_data:
                     print(f"  -> [!] NLP skipped: {bi_data['error']}")
                 else:
-                    print(json.dumps(bi_data, indent=2, ensure_ascii=False))
+                    print(f"  -> [+] AI analysis complete.")
+                    
+                # Save the result into our dictionary using the post_index as the key
+                bi_results_map[post_id] = bi_data
                     
             print("\n============================================================")
             
         elif outliers.empty:
             print("\n[!] No trend data could be calculated.")
+
+        # Tier 5: Report Generation Strategy
+        print("\n[*] Generating Persian Market Report...")
+        reporter = ReportGenerator()
+        reporter.generate_persian_report(
+            target_username=target_username, 
+            trends=trends, 
+            outliers=outliers, 
+            bi_results=bi_results_map,
+            make_pdf=make_pdf  # Pass the user's choice to the generator
+        )
 
     except FileNotFoundError as e:
         print(f"\n[!] {e}")
