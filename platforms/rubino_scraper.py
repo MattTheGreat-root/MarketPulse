@@ -366,27 +366,6 @@ class RubinoScraper(BaseScraper):
             return None
 
 
-    def _extract_description(self):
-        """
-        Grabs the post caption. The caption span uses class `rtl-1br88u2`.
-        IMPORTANT: comment text spans share this class, so this MUST be called
-        while still on the post view, BEFORE the comment section is opened —
-        the first displayed `rtl-1br88u2` is then the caption.
-        """
-        try:
-            candidates = self.driver.find_elements(By.CSS_SELECTOR, "span.rtl-1br88u2")
-            for el in candidates:
-                try:
-                    if el.is_displayed():
-                        txt = el.text.strip()
-                        if txt:
-                            return txt
-                except Exception:
-                    continue
-        except Exception:
-            pass
-        return ""
-
     def _open_comment_section(self):
         try:
             target = self.driver.execute_script(
@@ -472,18 +451,19 @@ class RubinoScraper(BaseScraper):
             self.driver.execute_script("window.scrollBy({top: 400, behavior: 'smooth'});")
         time.sleep(pause_time)
 
-    def _collect_comments(self, max_comments=10):
+    def _collect_comments_and_desc(self, max_comments=10):
+        description = ""
         comments = []
         seen = set()
 
         if not self._open_comment_section():
-            return comments
+            return description, comments
 
         stagnant_rounds = 0
         max_stagnant_rounds = 3
 
         while len(comments) < max_comments and stagnant_rounds < max_stagnant_rounds:
-            # FIX: Grab all comments regardless of text direction
+            # Grab all rows that are either RTL or LTR comments (and the caption)
             rows = self.driver.find_elements(By.CSS_SELECTOR, "div.rtl-5lyezw, div.rtl-15m2bl8")
             
             if not rows:
@@ -492,6 +472,13 @@ class RubinoScraper(BaseScraper):
             before = len(comments)
 
             for row in rows:
+                # FILTER: Real comments have a timestamp/reply block (rtl-1um1bzv). The caption does not.
+                try:
+                    reply_block = row.find_elements(By.CSS_SELECTOR, "div.rtl-1um1bzv")
+                    is_caption = len(reply_block) == 0
+                except Exception:
+                    is_caption = False
+
                 try:
                     user = row.find_element(By.CSS_SELECTOR, "span.rtl-19gb1ua").text.strip()
                 except Exception:
@@ -501,6 +488,16 @@ class RubinoScraper(BaseScraper):
                 except Exception:
                     text = ""
 
+                if not text:
+                    continue
+
+                # If it's the caption, save it to the description variable and skip adding to comments
+                if is_caption:
+                    if not description:
+                        description = text
+                    continue
+
+                # Process as a normal comment
                 key = (user, text)
                 if key in seen or not (user or text):
                     continue
@@ -521,8 +518,8 @@ class RubinoScraper(BaseScraper):
             self._scroll_comments(pause_time=1.0)
 
         self._close_comment_section()
-        return comments[:max_comments]
-
+        return description, comments[:max_comments]
+    
     def _close_comment_section(self):
         max_attempts = 3
         
@@ -570,21 +567,19 @@ class RubinoScraper(BaseScraper):
             pass
 
     def extract_single_post_data(self):
-        # 1. Caption MUST be read before opening comments (shared CSS class).
-        description = self._extract_description()
+        # 1. Open comments first to get the full, un-truncated description and the comments
+        description, comment_list = self._collect_comments_and_desc(max_comments=10)
 
-        # 2. Price / likes / comment-count from the visible post text.
-        soup = BeautifulSoup(self.driver.page_source, "html.parser")
-        text_content = soup.get_text(separator=" ")
-        engagement_info = self._parse_engagement_text(text_content)
-
-        # 3. Actual comment texts (up to 10).
-        comment_list = self._collect_comments(max_comments=10)
+        # 2. Get the main post view text (for the likes and total comments count)
+        text_content = self.driver.execute_script("return document.body.innerText;")
+        
+        # 3. Combine them so the regex can find the price even if it was truncated on the main view
+        combined_text = description + " \n " + text_content
+        engagement_info = self._parse_engagement_text(combined_text)
 
         likes = self._safe_int(engagement_info.get("likes", 0)) or 0
         comment_count = self._safe_int(engagement_info.get("comments", 0)) or 0
         engagement = likes + comment_count
-
 
         return {
             "description": description,
