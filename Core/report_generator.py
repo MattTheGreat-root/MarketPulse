@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import markdown
-import pdfkit
+from weasyprint import HTML
 
 class ReportGenerator:
     def __init__(self, output_dir="reports"):
@@ -84,7 +84,7 @@ class ReportGenerator:
             f.write(md_text)
         print(f"[+] Persian Markdown report generated at: {report_path}")
 
-        # 3. Generate PDF if requested
+        # 3. Generate PDF if requested using WeasyPrint
         if make_pdf:
             html_path = report_path.replace(".md", ".html")
             pdf_path = report_path.replace(".md", ".pdf")
@@ -113,14 +113,13 @@ class ReportGenerator:
                 f.write(styled_html)
                 
             try:
-                # Disable warning outputs from wkhtmltopdf
-                options = {'encoding': "UTF-8", 'quiet': ''}
-                pdfkit.from_file(html_path, pdf_path, options=options)
+                # Generate PDF natively in Python
+                HTML(string=styled_html).write_pdf(pdf_path)
                 print(f"[+] Persian PDF report generated at: {pdf_path}")
                 # Clean up the temporary HTML file if PDF was successful
                 os.remove(html_path)
-            except Exception:
-                print(f"[!] 'wkhtmltopdf' is missing or failed. PDF skipped.")
+            except Exception as e:
+                print(f"[!] PDF generation failed: {e}")
                 print(f"[+] Fallback: Styled HTML file saved at: {html_path} (Open in Chrome and Ctrl+P to save as PDF)")
 
-        return report_path
+        return report_path  
