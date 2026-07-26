@@ -421,7 +421,6 @@ class RubinoScraper(BaseScraper):
             if not target:
                 return False
 
-            # Click the icon to open the panel
             self.driver.execute_script(
                 """
                 let el = arguments[0];
@@ -431,15 +430,12 @@ class RubinoScraper(BaseScraper):
                 target,
             )
 
-            # Wait for comment rows to load. 
-            # If the post has 0 comments, this will timeout. We catch the timeout gracefully!
             try:
+                # FIX: Wait for EITHER the RTL or LTR comment container to appear
                 WebDriverWait(self.driver, 2.5).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.rtl-5lyezw"))
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.rtl-5lyezw, div.rtl-15m2bl8"))
                 )
             except Exception:
-                # It timed out. The post likely has 0 comments. 
-                # We do NOTHING and let the script continue so it can safely close the panel.
                 pass
                 
             time.sleep(0.5)
@@ -448,10 +444,10 @@ class RubinoScraper(BaseScraper):
             return False
 
     def _find_comments_scrollable(self):
-        """Locate the scrollable ancestor that holds the comment rows."""
         return self.driver.execute_script(
             """
-            let row = document.querySelector('div.rtl-5lyezw');
+            // FIX: Search for either comment class to find the scrollable container
+            let row = document.querySelector('div.rtl-5lyezw, div.rtl-15m2bl8');
             if (!row) return null;
             let node = row.parentElement;
             while (node && node !== document.body) {
@@ -480,7 +476,6 @@ class RubinoScraper(BaseScraper):
         comments = []
         seen = set()
 
-        # If the panel failed to open entirely, skip.
         if not self._open_comment_section():
             return comments
 
@@ -488,10 +483,9 @@ class RubinoScraper(BaseScraper):
         max_stagnant_rounds = 3
 
         while len(comments) < max_comments and stagnant_rounds < max_stagnant_rounds:
-            rows = self.driver.find_elements(By.CSS_SELECTOR, "div.rtl-5lyezw")
+            # FIX: Grab all comments regardless of text direction
+            rows = self.driver.find_elements(By.CSS_SELECTOR, "div.rtl-5lyezw, div.rtl-15m2bl8")
             
-            # Speed Optimization: If there are absolutely 0 comments on the post, 
-            # break immediately so we don't waste 3 seconds scrolling an empty page.
             if not rows:
                 break
                 
@@ -526,41 +520,54 @@ class RubinoScraper(BaseScraper):
 
             self._scroll_comments(pause_time=1.0)
 
-        # ALWAYS safely close the panel, even if we found 0 comments
         self._close_comment_section()
         return comments[:max_comments]
 
     def _close_comment_section(self):
-        """
-        Forcefully clicks the topmost back button to close the comment panel,
-        returning us safely to the post view.
-        """
-        try:
-            candidates = self.driver.find_elements(By.XPATH, "//div[contains(@class, 'rtl-1x9eqjj')]")
-            visible_flags = self.driver.execute_script(
-                """
-                let els = arguments[0];
-                return els.map(el => {
-                    let rect = el.getBoundingClientRect();
-                    return rect.width > 0 && rect.height > 0 &&
-                        rect.left >= -1 && rect.left < window.innerWidth;
-                });
-                """,
-                candidates,
+        max_attempts = 3
+        
+        for _ in range(max_attempts):
+            # FIX: Check if either LTR or RTL comment rows still exist on screen
+            comments_open = self.driver.execute_script(
+                "return document.querySelectorAll('div.rtl-5lyezw, div.rtl-15m2bl8').length > 0;"
             )
-            visible = [el for el, ok in zip(candidates, visible_flags) if ok]
-
-            if visible:
-                # Click the topmost active back button (which belongs to the comment panel)
-                self.driver.execute_script("arguments[0].click();", visible[-1])
-            else:
-                self.driver.back()
-                
-        except Exception:
-            self.driver.back()
             
-        time.sleep(0.8)
+            if not comments_open:
+                time.sleep(0.4)
+                return
 
+            try:
+                candidates = self.driver.find_elements(By.XPATH, "//div[contains(@class, 'rtl-1x9eqjj')]")
+                visible_flags = self.driver.execute_script(
+                    """
+                    let els = arguments[0];
+                    return els.map(el => {
+                        let rect = el.getBoundingClientRect();
+                        return rect.width > 0 && rect.height > 0 &&
+                            rect.left >= -1 && rect.left < window.innerWidth;
+                    });
+                    """,
+                    candidates,
+                )
+                visible = [el for el, ok in zip(candidates, visible_flags) if ok]
+
+                if visible:
+                    self.driver.execute_script("arguments[0].click();", visible[-1])
+                else:
+                    self.driver.back()
+                    
+            except Exception:
+                self.driver.back()
+            
+            time.sleep(0.8)
+
+        try:
+            # FIX: Ensure both classes are gone before moving on
+            WebDriverWait(self.driver, 2).until_not(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div.rtl-5lyezw, div.rtl-15m2bl8"))
+            )
+        except Exception:
+            pass
 
     def extract_single_post_data(self):
         # 1. Caption MUST be read before opening comments (shared CSS class).
