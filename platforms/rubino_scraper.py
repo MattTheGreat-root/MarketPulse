@@ -209,9 +209,18 @@ class RubinoScraper(BaseScraper):
             if self.open_post_by_index(target_index):
                 data = self.extract_single_post_data()
                 if data:
-                    data["post_index"] = len(results) + 1
-                    results.append(data)
-                    print(f"[+] Scraped {len(results)}: {data}")
+                    # Enforce final column order: post_index, description, price, engagement, comments
+                    ordered = {
+                        "post_index": len(results) + 1,
+                        "description": data.get("description", ""),
+                        "price": data.get("price", "None"),
+                        "engagement": data.get("engagement", 0),
+                        "comments": data.get("comments", ""),
+                    }
+                    results.append(ordered)
+                    print(f"[+] Scraped {len(results)}: post_index={ordered['post_index']} "
+                          f"price={ordered['price']} engagement={ordered['engagement']}")
+
                 self.go_back_to_grid()
 
         return results
@@ -308,29 +317,31 @@ class RubinoScraper(BaseScraper):
             # group(1) guarantees we are ONLY extracting the number, ignoring the words around it
             raw_price = best_match.group(1)
             clean = re.sub(r"[,/\.،]", "", raw_price)
-            
-            if clean:
-                price = self._convert_persian_nums(clean)
-                
-                # MULTIPLIER LOGIC: Lock the context window strictly to the 25 chars AFTER the number
-                end_idx = best_match.end(1) 
-                context = text[end_idx : end_idx + 25].lower()
-                
-                if 'میلیارد' in context:
-                    price = str(int(price) * 1000000000)
-                elif 'میلیون' in context or 'm' in context:
-                    price = str(int(price) * 1000000)
-                elif 'هزار' in context or 'k' in context:
-                    price = str(int(price) * 1000)
+            price_int = self._safe_int(self._convert_persian_nums(clean))
 
-        # Extract Likes & Comments safely
+            # Only treat as a valid price if we actually parsed a number.
+            if price_int is not None:
+                # MULTIPLIER LOGIC: Lock the context window strictly to the 25 chars AFTER the number
+                end_idx = best_match.end(1)
+                context = text[end_idx : end_idx + 25].lower()
+
+                if 'میلیارد' in context:
+                    price_int *= 1000000000
+                elif 'میلیون' in context or 'm' in context:
+                    price_int *= 1000000
+                elif 'هزار' in context or 'k' in context:
+                    price_int *= 1000
+
+                price = str(price_int)
+
+        # Extract Likes & Comments safely (never raise on malformed text)
         likes_match = re.search(r"([\d\u0660-\u0669\u06f0-\u06f9,\./،]+)\s*(?:لایک|مشاهده)", text)
-        likes = likes_match.group(1) if likes_match else "0"
-        likes = int(self._convert_persian_nums(re.sub(r"[,/\.،]", "", likes))) if likes != "0" else 0
+        likes_raw = self._convert_persian_nums(re.sub(r"[,/\.،]", "", likes_match.group(1))) if likes_match else ""
+        likes = self._safe_int(likes_raw) or 0
 
         comments_match = re.search(r"([\d\u0660-\u0669\u06f0-\u06f9,\./،]+)\s*کامنت", text)
-        comments = comments_match.group(1) if comments_match else "0"
-        comments = int(self._convert_persian_nums(re.sub(r"[,/\.،]", "", comments))) if comments != "0" else 0
+        comments_raw = self._convert_persian_nums(re.sub(r"[,/\.،]", "", comments_match.group(1))) if comments_match else ""
+        comments = self._safe_int(comments_raw) or 0
 
         return {
             "price": price if price != "None" else "None",
@@ -338,7 +349,239 @@ class RubinoScraper(BaseScraper):
             "comments": comments,
         }
 
+    @staticmethod
+    def _safe_int(value):
+        """
+        Best-effort int conversion. Strips any non-digit characters and returns
+        None if nothing numeric remains, so callers never hit `int('')` crashes.
+        """
+        if value is None:
+            return None
+        digits = re.sub(r"\D", "", str(value))
+        if not digits:
+            return None
+        try:
+            return int(digits)
+        except (ValueError, TypeError):
+            return None
+
+
+    def _extract_description(self):
+        """
+        Grabs the post caption. The caption span uses class `rtl-1br88u2`.
+        IMPORTANT: comment text spans share this class, so this MUST be called
+        while still on the post view, BEFORE the comment section is opened —
+        the first displayed `rtl-1br88u2` is then the caption.
+        """
+        try:
+            candidates = self.driver.find_elements(By.CSS_SELECTOR, "span.rtl-1br88u2")
+            for el in candidates:
+                try:
+                    if el.is_displayed():
+                        txt = el.text.strip()
+                        if txt:
+                            return txt
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return ""
+
+    def _open_comment_section(self):
+        try:
+            target = self.driver.execute_script(
+                """
+                let paths = document.querySelectorAll("path[d^='M2.678 11.894']");
+                let visible = [];
+                for (let p of paths) {
+                    let svg = p.closest('svg');
+                    if (!svg) continue;
+                    let rect = svg.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.left < window.innerWidth) {
+                        visible.push(svg);
+                    }
+                }
+                if (visible.length === 0) return null;
+                
+                let start = visible[visible.length - 1]; 
+                let node = start.parentElement;
+                let depth = 0;
+                
+                while (node && node !== document.body && depth < 4) {
+                    if (window.getComputedStyle(node).cursor === 'pointer' || node.tagName === 'BUTTON') {
+                        return node;
+                    }
+                    node = node.parentElement;
+                    depth++;
+                }
+                return start;
+                """
+            )
+
+            if not target:
+                return False
+
+            # Click the icon to open the panel
+            self.driver.execute_script(
+                """
+                let el = arguments[0];
+                el.scrollIntoView({block: 'center'});
+                el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
+                """,
+                target,
+            )
+
+            # Wait for comment rows to load. 
+            # If the post has 0 comments, this will timeout. We catch the timeout gracefully!
+            try:
+                WebDriverWait(self.driver, 2.5).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.rtl-5lyezw"))
+                )
+            except Exception:
+                # It timed out. The post likely has 0 comments. 
+                # We do NOTHING and let the script continue so it can safely close the panel.
+                pass
+                
+            time.sleep(0.5)
+            return True
+        except Exception:
+            return False
+
+    def _find_comments_scrollable(self):
+        """Locate the scrollable ancestor that holds the comment rows."""
+        return self.driver.execute_script(
+            """
+            let row = document.querySelector('div.rtl-5lyezw');
+            if (!row) return null;
+            let node = row.parentElement;
+            while (node && node !== document.body) {
+                let style = window.getComputedStyle(node);
+                if ((style.overflowY === 'auto' || style.overflowY === 'scroll')
+                    && node.scrollHeight > node.clientHeight) {
+                    return node;
+                }
+                node = node.parentElement;
+            }
+            return null;
+            """
+        )
+
+    def _scroll_comments(self, pause_time=1.0):
+        container = self._find_comments_scrollable()
+        if container is not None:
+            self.driver.execute_script(
+                "arguments[0].scrollBy({top: 400, behavior: 'smooth'});", container
+            )
+        else:
+            self.driver.execute_script("window.scrollBy({top: 400, behavior: 'smooth'});")
+        time.sleep(pause_time)
+
+    def _collect_comments(self, max_comments=10):
+        comments = []
+        seen = set()
+
+        # If the panel failed to open entirely, skip.
+        if not self._open_comment_section():
+            return comments
+
+        stagnant_rounds = 0
+        max_stagnant_rounds = 3
+
+        while len(comments) < max_comments and stagnant_rounds < max_stagnant_rounds:
+            rows = self.driver.find_elements(By.CSS_SELECTOR, "div.rtl-5lyezw")
+            
+            # Speed Optimization: If there are absolutely 0 comments on the post, 
+            # break immediately so we don't waste 3 seconds scrolling an empty page.
+            if not rows:
+                break
+                
+            before = len(comments)
+
+            for row in rows:
+                try:
+                    user = row.find_element(By.CSS_SELECTOR, "span.rtl-19gb1ua").text.strip()
+                except Exception:
+                    user = ""
+                try:
+                    text = row.find_element(By.CSS_SELECTOR, "span.rtl-1br88u2").text.strip()
+                except Exception:
+                    text = ""
+
+                key = (user, text)
+                if key in seen or not (user or text):
+                    continue
+
+                seen.add(key)
+                comments.append(f"{user}: {text}" if user else text)
+                if len(comments) >= max_comments:
+                    break
+
+            if len(comments) >= max_comments:
+                break
+
+            if len(comments) == before:
+                stagnant_rounds += 1
+            else:
+                stagnant_rounds = 0
+
+            self._scroll_comments(pause_time=1.0)
+
+        # ALWAYS safely close the panel, even if we found 0 comments
+        self._close_comment_section()
+        return comments[:max_comments]
+
+    def _close_comment_section(self):
+        """
+        Forcefully clicks the topmost back button to close the comment panel,
+        returning us safely to the post view.
+        """
+        try:
+            candidates = self.driver.find_elements(By.XPATH, "//div[contains(@class, 'rtl-1x9eqjj')]")
+            visible_flags = self.driver.execute_script(
+                """
+                let els = arguments[0];
+                return els.map(el => {
+                    let rect = el.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0 &&
+                        rect.left >= -1 && rect.left < window.innerWidth;
+                });
+                """,
+                candidates,
+            )
+            visible = [el for el, ok in zip(candidates, visible_flags) if ok]
+
+            if visible:
+                # Click the topmost active back button (which belongs to the comment panel)
+                self.driver.execute_script("arguments[0].click();", visible[-1])
+            else:
+                self.driver.back()
+                
+        except Exception:
+            self.driver.back()
+            
+        time.sleep(0.8)
+
+
     def extract_single_post_data(self):
+        # 1. Caption MUST be read before opening comments (shared CSS class).
+        description = self._extract_description()
+
+        # 2. Price / likes / comment-count from the visible post text.
         soup = BeautifulSoup(self.driver.page_source, "html.parser")
         text_content = soup.get_text(separator=" ")
-        return self._parse_engagement_text(text_content)
+        engagement_info = self._parse_engagement_text(text_content)
+
+        # 3. Actual comment texts (up to 10).
+        comment_list = self._collect_comments(max_comments=10)
+
+        likes = self._safe_int(engagement_info.get("likes", 0)) or 0
+        comment_count = self._safe_int(engagement_info.get("comments", 0)) or 0
+        engagement = likes + comment_count
+
+
+        return {
+            "description": description,
+            "price": engagement_info["price"],
+            "engagement": engagement,
+            "comments": "\n".join(comment_list),
+        }
