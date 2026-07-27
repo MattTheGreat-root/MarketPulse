@@ -183,6 +183,7 @@ class ReportGenerator:
             self._kpi_cards(client),
             self._category_section(client),
             self._pricing_section(client),
+            self._mini_competitor_section(client, comparison, competitors),
             self._top_posts_section(client),
             self._footer(brand),
         ]
@@ -556,6 +557,58 @@ class ReportGenerator:
             <p>مقایسه مستقیم پیج شما با رقبای انتخاب‌شده در بازار.</p>
             {pos_html}
             <div class="chart-box">{eng_chart}</div>
+            <table class="data-table compare">
+                <thead>{header}</thead>
+                <tbody>{table_rows}</tbody>
+            </table>
+        </section>
+        """
+
+    # ------------------------------------------------------ mini competitor section
+    def _mini_competitor_section(self, client, comparison, competitors):
+        if not comparison or not competitors:
+            return ""
+        metrics = comparison.get("metrics", {})
+        client_row = metrics.get("client", {})
+        comp_rows = metrics.get("competitors", [])
+        if not comp_rows:
+            return ""
+
+        header = "<tr><th>پیج</th><th>پست</th><th>میانگین تعامل</th><th>دسته برتر</th><th>روند</th></tr>"
+
+        def make_row(r, is_client=False):
+            cls = " class='client-row'" if is_client else ""
+            name = ("⭐ @" + r["username"]) if is_client else "@" + r["username"]
+            return (f"<tr{cls}><td>{_e(name)}</td><td>{r['posts']}</td>"
+                    f"<td>{_fmt_num(r['avg_engagement'])}</td>"
+                    f"<td>{_e(r.get('star_category') or '—')}</td>"
+                    f"<td>{TREND_FA.get(r.get('trend','n/a'))}</td></tr>")
+
+        table_rows = make_row(client_row, True) + "".join(make_row(r) for r in comp_rows)
+
+        pos = comparison.get("positioning", {})
+        pos_html = ""
+        if pos:
+            rank = pos.get("engagement_rank")
+            field = pos.get("field_size")
+            eng_vs = pos.get("engagement_vs_market_pct")
+            pieces = []
+            if rank:
+                pieces.append(f"رتبه شما: <b>{rank} از {field}</b>")
+            if eng_vs is not None:
+                sign = "بالاتر" if eng_vs >= 0 else "پایین‌تر"
+                pieces.append(f"تعامل شما <b>{abs(eng_vs)}٪ {sign}</b> از میانگین رقبا")
+            if pos.get("price_position"):
+                pp = {"premium": "پریمیوم", "budget": "اقتصادی",
+                      "mid-market": "متوسط بازار"}.get(pos["price_position"], pos["price_position"])
+                pieces.append(f"جایگاه قیمتی: <b>{pp}</b>")
+            pos_html = "<div class='callout'><ul class='summary-list'>" + \
+                       "".join(f"<li>{p}</li>" for p in pieces) + "</ul></div>"
+
+        return f"""
+        <section class="section">
+            <h2>۶. مقایسه با رقبا</h2>
+            {pos_html}
             <table class="data-table compare">
                 <thead>{header}</thead>
                 <tbody>{table_rows}</tbody>
