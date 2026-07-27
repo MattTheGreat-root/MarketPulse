@@ -15,19 +15,74 @@ except ImportError:
 
 
 # ----------------------------------------------------------------------------
-# Domain knowledge: product taxonomy for Iranian jewelry / accessory shops.
+# Domain knowledge: product taxonomy for general e-commerce shops.
 # Maps a canonical English label to the Persian keywords that identify it.
 # The analyzer is generic, but this taxonomy dramatically sharpens the insights
-# for this niche. Unknown products fall back to "other".
+# for each niche. Unknown products fall back to "Other".
 # ----------------------------------------------------------------------------
 PRODUCT_TAXONOMY = {
+    # --- Jewelry (existing) ---
     "Bangle (النگو)":      ["النگو", "النگوی", "النگوطلاروس", "النگوآینه"],
     "Necklace (گردنبند)":  ["گردنبند"],
     "Bracelet (دستبند)":   ["دستبند"],
     "Ring (انگشتر)":       ["انگشتر"],
     "Full Set (سرویس)":    ["سرویس"],
-    "Half Set (نیم‌ست)":    ["نیم‌ست", "نیمست", "نیم ست", "نیم‌ست", "نیمپوش", "تکپوش"],
+    "Half Set (نیم‌ست)":   ["نیم‌ست", "نیمست", "نیم ست", "نیم‌ست", "نیمپوش", "تکپوش"],
     "Special Pack (پک)":   ["پک ویژه", "پک تخفیف", "فروش_ویژه"],
+
+    # --- Clothes ---
+    "Dress (پیراهن/آبی)": ["پیراهن", "آبی", "تونیک", "بلوز", "تی‌شرت", "تیشرت",
+                           "پیش‌بند", "کتانی", "کت"],
+    "Pants (شلوار)":       ["شلوار", "پانت", "باند", "جین", "جینز", "شلوارک",
+                           "شلوار پارچه‌ای", "آفشان", "کاپری"],
+    "Jacket/Coat (کت/مو)": ["کت", "مو", "ژاکت", "کاپشن", "بارانی", "ورزشی",
+                           "بومبر", "پفی", "کاپشن پفی"],
+    "Skirt (دامن)":        ["دامن", "مینی", "مکسی", "دامن بلند", "دامن کوتاه"],
+    "Shirt (پیراهن مردانه)": ["پیراهن مردانه", "پیراهن", "شیرت", "تی‌شرت مردانه",
+                             "پیراهن یقه‌دار", "پیراهن کارگو"],
+    "Suit/Set (استرت)":    ["استرت", "دستیو", "دستیوه", "کت و شلوار", "پیش‌بند و شلوار"],
+
+    # --- Accessories ---
+    "Bag (کیف/کوله)":     ["کیف", "کیف دستی", "کیف شانه‌ای", "کوله", "کوله‌پشتی",
+                           "بست", "کیف زن", "کیف مردانه", "کیف سفر"],
+    "Hat (کلاه)":          ["کلاه", "کلاه نمدی", "کلاه بافت", "کلاه نقاب‌دار",
+                           "بندانا", "شال", "واش", "هودی"],
+    "Sunglasses (عینک آفتابی)": ["عینک آفتابی", "عینک آفتابی", "استیشن", "اوگلی",
+                                "عینک طبی", "عینک خورشیدی"],
+    "Scarf/Shawl (شال/روسری)": ["شال", "روسری", "بندانه", "شال ابریشمی",
+                               "شال کشمیر", "روسری چرمی"],
+    "Belt (کمربند)":       ["کمربند", "کمربند چرمی", "کمربند پارچه‌ای"],
+
+    # --- Watches ---
+    "Watch (ساعت)":        ["ساعت", "ساعت مچی", "ساعت دستی", "ساعت زنانه",
+                           "ساعت مردانه", "ساعت هوشمند", "اسمارت‌واتچ", "ساعت مکانیکی"],
+
+    # --- Perfume ---
+    "Perfume (عطر/پارفوم)": ["عطر", "پارفوم", "عطر زنانه", "عطر مردانه",
+                            "دستمال عطر", "اسپری بدن", "عطر گل", "عطر مینا",
+                            "عطر ایرانی", "عطر فرانسوی", "عطر ترکی"],
+
+    # --- Shoes ---
+    "Shoes (کفش)":         ["کفش", "کفش زنانه", "کفش مردانه", "چکمه", "کتونی",
+                           "کفش پاشنه‌بلند", "کفش ورزشی", "کتونی زنانه", "کتونی مردانه",
+                           "صندل", "نیم‌بوت", "بوت", "کفش چرمی"],
+
+    # --- Cosmetics & Skincare ---
+    "Cosmetics (آرایش/مراقبت)": ["آرایش", "رژلب", "ریمل", "کرم", "مرطوب‌کننده",
+                               "سرم", "ماسک", "ژل", "لوشن", "ضدآفتاب", "پرایمر",
+                               "فاندیشن", "پودر", "بلاش", "ریمل", "سایه چشم",
+                               "برش", "هایلایتر", "کنتور", "بازیابی", "مراقبت از پوست",
+                               "ماسک صورت", "کرم شب", "کرم روز", "ضدچروز"],
+
+    # --- Home & Living ---
+    "Home Decor (دکوراسیون)": ["دکوراسیون", "پرتره", "قاب عکس", "شمعدان",
+                              "روشنایی", "لوستر", "شمع", "گلدان", "پرگار",
+                              "دکور خانه", "فرش", "سجاده", "پرده"],
+
+    # --- Food & Health ---
+    "Food & Health (سلامت/غذا)": ["سالم", "مکمل", "ویتامین", "پروتئین", "غذای سالم",
+                                 "چای", "عسل", "گردو", "میوه خشک", "پروتئین",
+                                 "کراتین", "بیوتین", "مغذی", "سوپلیمنت"],
 }
 
 # Buyer-intent signals used for a fast, offline (non-AI) first pass over comments.
@@ -61,14 +116,13 @@ class MarketAnalyzer:
         """
         The scraper's regex sometimes captures a truncated price (e.g. '6000'
         instead of '850000'). We keep the raw number but flag obviously broken
-        values so they don't poison the statistics. A price under 10,000 Toman
-        for jewelry is almost always a parsing artifact.
+        values so they don't poison the statistics. A price under 1,000 Toman
+        for most e-commerce categories is almost always a parsing artifact.
         """
         prices = pd.to_numeric(
             raw.astype(str).str.extract(r"(\d+)")[0], errors="coerce"
         )
-        # Treat sub-10k prices as unreliable (jewelry is never that cheap here).
-        prices = prices.where(prices >= 10000, np.nan)
+        prices = prices.where(prices >= 1000, np.nan)
         return prices
 
     @staticmethod

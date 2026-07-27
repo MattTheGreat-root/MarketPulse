@@ -88,6 +88,8 @@ def main():
     make_pdf = (make_pdf_input == "y")
     make_zip_input = ask("[?] Package everything into a client .zip? (y/n): ", "y").lower()
     make_zip = (make_zip_input == "y")
+    report_type_input = ask("[?] Report type: full (detailed) or mini (~4 pages)? (full/mini): ", "full").lower()
+    is_mini = report_type_input == "mini"
 
     all_usernames = [client_username] + competitor_usernames
 
@@ -132,12 +134,20 @@ def main():
     # ----------------------------------------------------------- report phase
     print("\n[*] Generating client report...")
     reporter = ReportGenerator()
-    paths = reporter.generate_report(
-        client_insights=client_insights,
-        comparison=comparison,
-        competitor_insights=competitor_insights,
-        make_pdf=make_pdf,
-    )
+    if is_mini:
+        paths = reporter.generate_mini_report(
+            client_insights=client_insights,
+            comparison=comparison,
+            competitor_insights=competitor_insights,
+            make_pdf=make_pdf,
+        )
+    else:
+        paths = reporter.generate_report(
+            client_insights=client_insights,
+            comparison=comparison,
+            competitor_insights=competitor_insights,
+            make_pdf=make_pdf,
+        )
 
     # ---------------------------------------------------------- package phase
     if make_zip:
@@ -145,6 +155,7 @@ def main():
         packager.package_deliverables(
             target_username=client_username,
             competitor_usernames=competitor_usernames,
+            mini=is_mini,
         )
 
     print("\n[+] Done. Report ready for delivery.")

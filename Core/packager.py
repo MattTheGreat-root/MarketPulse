@@ -22,7 +22,7 @@ class ClientPackager:
 
 
     def package_deliverables(self, target_username: str, competitor_usernames=None,
-                             include_html_fallback=True):
+                             include_html_fallback=True, mini: bool = False):
         """
         Bundles the client's report (PDF, and HTML as fallback) together with
         the raw Excel data for the client and any competitors into one zip.
@@ -31,6 +31,7 @@ class ClientPackager:
         print(f"\n[*] Packaging client deliverables for @{target_username}...")
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_label = "mini_report" if mini else "market_report"
         zip_filename = f"{target_username}_Client_Deliverable_{timestamp}.zip"
         zip_path = os.path.join(self.output_dir, zip_filename)
 
@@ -38,13 +39,15 @@ class ClientPackager:
         try:
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
                 # --- Report (PDF preferred, HTML fallback) --------------------
-                pdf = self._get_latest_file(self.reports_dir, f"{target_username}_market_report.pdf")
+                pdf = self._get_latest_file(self.reports_dir,
+                                           f"{target_username}_{report_label}.pdf")
                 if pdf:
                     zipf.write(pdf, arcname=os.path.basename(pdf))
                     print(f"  -> Added report (PDF): {os.path.basename(pdf)}")
                     added_any = True
                 elif include_html_fallback:
-                    html = self._get_latest_file(self.reports_dir, f"{target_username}_market_report.html")
+                    html = self._get_latest_file(self.reports_dir,
+                                                f"{target_username}_{report_label}.html")
                     if html:
                         zipf.write(html, arcname=os.path.basename(html))
                         print(f"  -> Added report (HTML): {os.path.basename(html)}")

@@ -116,6 +116,45 @@ class ReportGenerator:
 
         return {"html": html_path, "pdf": pdf_path}
 
+    def generate_mini_report(self, client_insights: dict, comparison: dict | None = None,
+                                 competitor_insights: list | None = None,
+                                 make_pdf: bool = True, brand: str = "MarketPulse"):
+        """
+        Generates a concise ~4-page report covering the most essential insights.
+        Excludes AI deep-dive, competitor comparison, demand signals, hashtags,
+        and engagement trend chart — keeping the file size small and the focus
+        on actionable category, pricing, and top-post data.
+        """
+        username = client_insights["username"]
+        competitor_insights = competitor_insights or []
+
+        body = self._build_mini_body(client_insights, comparison, competitor_insights, brand)
+        styled_html = self._wrap_html(body, username, brand)
+
+        html_path = os.path.join(self.output_dir, f"{username}_mini_report.html")
+        with open(html_path, "w", encoding="utf-8-sig") as f:
+            f.write(styled_html)
+        print(f"[+] HTML mini report generated at: {html_path}")
+
+        pdf_path = None
+        if make_pdf:
+            pdf_path = os.path.join(self.output_dir, f"{username}_mini_report.pdf")
+            if os.path.exists(pdf_path):
+                try:
+                    os.remove(pdf_path)
+                except OSError:
+                    pass
+            try:
+                HTML(string=styled_html).write_pdf(pdf_path)
+
+                print(f"[+] PDF mini report generated at: {pdf_path}")
+            except Exception as e:
+                print(f"[!] PDF mini-report generation failed: {e}")
+                print(f"[+] Fallback: open the HTML in Chrome and Ctrl+P to save as PDF.")
+                pdf_path = None
+
+        return {"html": html_path, "pdf": pdf_path}
+
     # ============================================================ body builder
     def _build_body(self, client, comparison, competitors, brand):
         sections = [
@@ -134,6 +173,19 @@ class ReportGenerator:
             sections.append(self._advice_section(comparison))
         sections.append(self._top_posts_section(client))
         sections.append(self._footer(brand))
+        return "\n".join(s for s in sections if s)
+
+    # -------------------------------------------------------- mini body builder
+    def _build_mini_body(self, client, comparison, competitors, brand):
+        sections = [
+            self._cover(client, brand),
+            self._executive_summary(client, comparison),
+            self._kpi_cards(client),
+            self._category_section(client),
+            self._pricing_section(client),
+            self._top_posts_section(client),
+            self._footer(brand),
+        ]
         return "\n".join(s for s in sections if s)
 
     # -------------------------------------------------------------- cover page
