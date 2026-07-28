@@ -3,59 +3,82 @@ import glob
 import zipfile
 from datetime import datetime
 
+
 class ClientPackager:
     def __init__(self, data_dir="data", reports_dir="reports", output_dir="deliverables"):
         self.data_dir = data_dir
         self.reports_dir = reports_dir
         self.output_dir = output_dir
-
-        # Ensure the deliverables directory exists
-        if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir)
+        os.makedirs(self.output_dir, exist_ok=True)
 
     def _get_latest_file(self, directory: str, pattern: str):
-        """Finds the most recently created file matching the pattern in the given directory."""
-        search_pattern = os.path.join(directory, pattern)
-        files = glob.glob(search_pattern)
+        files = glob.glob(os.path.join(directory, pattern))
         if not files:
             return None
-        return max(files, key=os.path.getctime)
+        # Use modification time: the report generator overwrites the PDF in
+        # place on every run, so mtime is the reliable "freshest" signal
+        # (getctime is unreliable across platforms for overwritten files).
+        return max(files, key=os.path.getmtime)
 
-    def package_deliverables(self, target_username: str):
-        """Finds the latest Excel data and PDF report and zips them for the client."""
+
+    def package_deliverables(self, target_username: str, competitor_usernames=None,
+                             include_html_fallback=True, mini: bool = False):
+        """
+        Bundles the client's report (PDF, and HTML as fallback) together with
+        the raw Excel data for the client and any competitors into one zip.
+        """
+        competitor_usernames = competitor_usernames or []
         print(f"\n[*] Packaging client deliverables for @{target_username}...")
 
-        # Find the latest files
-        latest_xlsx = self._get_latest_file(self.data_dir, f"{target_username}_*.xlsx")
-        latest_pdf = self._get_latest_file(self.reports_dir, f"{target_username}_market_report.pdf")
-
-        if not latest_xlsx and not latest_pdf:
-            print("[!] No XLSX or PDF found to zip. Packaging skipped.")
-            return None
-
-        # Create the Zip filename with a timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_label = "mini_report" if mini else "market_report"
         zip_filename = f"{target_username}_Client_Deliverable_{timestamp}.zip"
         zip_path = os.path.join(self.output_dir, zip_filename)
 
+        added_any = False
         try:
-            # ZIP_DEFLATED applies standard compression to make the file size smaller
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                if latest_pdf:
-                    zipf.write(latest_pdf, arcname=os.path.basename(latest_pdf))
-                    print(f"  -> Added report: {os.path.basename(latest_pdf)}")
-                else:
-                    print("  -> [!] Warning: No PDF report found to add.")
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+                # --- Report (PDF preferred, HTML fallback) --------------------
+                pdf = self._get_latest_file(self.reports_dir,
+                                           f"{target_username}_{report_label}.pdf")
+                if pdf:
+                    zipf.write(pdf, arcname=os.path.basename(pdf))
+                    print(f"  -> Added report (PDF): {os.path.basename(pdf)}")
+                    added_any = True
+                elif include_html_fallback:
+                    html = self._get_latest_file(self.reports_dir,
+                                                f"{target_username}_{report_label}.html")
+                    if html:
+                        zipf.write(html, arcname=os.path.basename(html))
+                        print(f"  -> Added report (HTML): {os.path.basename(html)}")
+                        added_any = True
 
-                if latest_xlsx:
-                    zipf.write(latest_xlsx, arcname=os.path.basename(latest_xlsx))
-                    print(f"  -> Added raw data: {os.path.basename(latest_xlsx)}")
-                else:
-                    print("  -> [!] Warning: No Excel file found to add.")
+                if not pdf:
+                    print("  -> [!] No PDF report found.")
+
+                # --- Client raw data ------------------------------------------
+                client_xlsx = self._get_latest_file(self.data_dir, f"{target_username}_*.xlsx")
+                if client_xlsx:
+                    zipf.write(client_xlsx, arcname=f"data/{os.path.basename(client_xlsx)}")
+                    print(f"  -> Added client data: {os.path.basename(client_xlsx)}")
+                    added_any = True
+
+                # --- Competitor raw data --------------------------------------
+                for comp in competitor_usernames:
+                    comp_xlsx = self._get_latest_file(self.data_dir, f"{comp}_*.xlsx")
+                    if comp_xlsx:
+                        zipf.write(comp_xlsx, arcname=f"data/competitors/{os.path.basename(comp_xlsx)}")
+                        print(f"  -> Added competitor data: {os.path.basename(comp_xlsx)}")
+                        added_any = True
+
+            if not added_any:
+                os.remove(zip_path)
+                print("[!] Nothing to package. Zip skipped.")
+                return None
 
             print(f"[+] Successfully created client zip package at: {zip_path}")
             return zip_path
-            
+
         except Exception as e:
             print(f"[!] Failed to create zip package: {e}")
             return None
