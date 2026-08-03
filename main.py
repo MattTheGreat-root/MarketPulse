@@ -12,6 +12,7 @@ from core.browser_manager import BrowserManager
 from auth.rubino_auth import RubikaAuth
 from platforms.rubino_scraper import RubinoScraper
 from platforms.telegram_scraper import TelegramScraper
+from platforms.bale_scraper import BaleScraper
 from core.analyzer import MarketAnalyzer, CompetitorComparator
 from core.report_generator import ReportGenerator
 from core.packager import ClientPackager
@@ -34,7 +35,24 @@ def scrape_profile(username, max_posts, platform="rubino"):
     """Scrape a single profile/channel. Returns True on success."""
     if platform == "telegram":
         return _scrape_telegram(username, max_posts)
+    if platform == "bale":
+        return _scrape_bale(username, max_posts)
     return _scrape_rubino(username, max_posts)
+
+
+def _scrape_bale(username, max_posts):
+    """Scrape a public Bale channel via its web preview (no account needed)."""
+    try:
+        print(f"\n[*] Initializing Bale scraping pipeline for channel: @{username}")
+        # No Selenium driver required; BaleScraper is pure HTTP.
+        scraper = BaleScraper(driver=None, target=username)
+        results = scraper.run(max_posts=max_posts)
+        return bool(results)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[!] Bale scraping failed for @{username}: {e}")
+        return False
 
 
 def _scrape_telegram(username, max_posts):
@@ -95,12 +113,19 @@ def main():
 
     # ---------------------------------------------------------------- inputs
     platform_input = ask(
-        "[?] Platform: rubino or telegram? (rubino/telegram): ", "rubino"
+        "[?] Platform: rubino, telegram, or bale? (rubino/telegram/bale): ", "rubino"
     ).lower()
-    platform = "telegram" if platform_input.startswith("t") else "rubino"
+    if platform_input.startswith("t"):
+        platform = "telegram"
+    elif platform_input.startswith("b"):
+        platform = "bale"
+    else:
+        platform = "rubino"
 
     if platform == "telegram":
         client_username = ask("[?] Enter the CLIENT Telegram channel (without @): ")
+    elif platform == "bale":
+        client_username = ask("[?] Enter the CLIENT Bale channel (without @): ")
     else:
         client_username = ask("[?] Enter the CLIENT Rubino username (without @): ")
     if not client_username:
@@ -113,11 +138,12 @@ def main():
     competitor_usernames = [c.strip() for c in competitors_raw.split(",") if c.strip()]
 
     mode = ask("[?] Scrape fresh data? (y/n - 'n' analyzes latest saved files): ", "n").lower()
-    if platform == "telegram":
-        # The public web preview exposes no comments, so comment-level AI analysis
-        # has nothing to work on. Skip it automatically to save time and API cost.
+    if platform in ("telegram", "bale"):
+        # The public web previews expose no comments, so comment-level AI
+        # analysis has nothing to work on. Skip it automatically to save time
+        # and API cost.
         run_nlp = False
-        print("[i] Telegram preview has no comments; AI comment analysis is skipped.")
+        print(f"[i] {platform.capitalize()} preview has no comments; AI comment analysis is skipped.")
     else:
         run_nlp_input = ask("[?] Run AI comment analysis (needs GROQ_API_KEY)? (y/n): ", "y").lower()
         run_nlp = (run_nlp_input == "y")
