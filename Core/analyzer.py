@@ -13,77 +13,8 @@ try:
 except ImportError:
     Groq = None
 
+from core.classifier import ProductClassifier
 
-# ----------------------------------------------------------------------------
-# Domain knowledge: product taxonomy for general e-commerce shops.
-# Maps a canonical English label to the Persian keywords that identify it.
-# The analyzer is generic, but this taxonomy dramatically sharpens the insights
-# for each niche. Unknown products fall back to "Other".
-# ----------------------------------------------------------------------------
-PRODUCT_TAXONOMY = {
-    # --- Jewelry (existing) ---
-    "Bangle (النگو)":      ["النگو", "النگوی", "النگوطلاروس", "النگوآینه"],
-    "Necklace (گردنبند)":  ["گردنبند"],
-    "Bracelet (دستبند)":   ["دستبند"],
-    "Ring (انگشتر)":       ["انگشتر"],
-    "Full Set (سرویس)":    ["سرویس"],
-    "Half Set (نیم‌ست)":   ["نیم‌ست", "نیمست", "نیم ست", "نیم‌ست", "نیمپوش", "تکپوش"],
-    "Special Pack (پک)":   ["پک ویژه", "پک تخفیف", "فروش_ویژه"],
-
-    # --- Clothes ---
-    "Dress (پیراهن/آبی)": ["پیراهن", "آبی", "تونیک", "بلوز", "تی‌شرت", "تیشرت",
-                           "پیش‌بند", "کتانی", "کت"],
-    "Pants (شلوار)":       ["شلوار", "پانت", "باند", "جین", "جینز", "شلوارک",
-                           "شلوار پارچه‌ای", "آفشان", "کاپری"],
-    "Jacket/Coat (کت/مو)": ["کت", "مو", "ژاکت", "کاپشن", "بارانی", "ورزشی",
-                           "بومبر", "پفی", "کاپشن پفی"],
-    "Skirt (دامن)":        ["دامن", "مینی", "مکسی", "دامن بلند", "دامن کوتاه"],
-    "Shirt (پیراهن مردانه)": ["پیراهن مردانه", "پیراهن", "شیرت", "تی‌شرت مردانه",
-                             "پیراهن یقه‌دار", "پیراهن کارگو"],
-    "Suit/Set (استرت)":    ["استرت", "دستیو", "دستیوه", "کت و شلوار", "پیش‌بند و شلوار"],
-
-    # --- Accessories ---
-    "Bag (کیف/کوله)":     ["کیف", "کیف دستی", "کیف شانه‌ای", "کوله", "کوله‌پشتی",
-                           "بست", "کیف زن", "کیف مردانه", "کیف سفر"],
-    "Hat (کلاه)":          ["کلاه", "کلاه نمدی", "کلاه بافت", "کلاه نقاب‌دار",
-                           "بندانا", "شال", "واش", "هودی"],
-    "Sunglasses (عینک آفتابی)": ["عینک آفتابی", "عینک آفتابی", "استیشن", "اوگلی",
-                                "عینک طبی", "عینک خورشیدی"],
-    "Scarf/Shawl (شال/روسری)": ["شال", "روسری", "بندانه", "شال ابریشمی",
-                               "شال کشمیر", "روسری چرمی"],
-    "Belt (کمربند)":       ["کمربند", "کمربند چرمی", "کمربند پارچه‌ای"],
-
-    # --- Watches ---
-    "Watch (ساعت)":        ["ساعت", "ساعت مچی", "ساعت دستی", "ساعت زنانه",
-                           "ساعت مردانه", "ساعت هوشمند", "اسمارت‌واتچ", "ساعت مکانیکی"],
-
-    # --- Perfume ---
-    "Perfume (عطر/پارفوم)": ["عطر", "پارفوم", "عطر زنانه", "عطر مردانه",
-                            "دستمال عطر", "اسپری بدن", "عطر گل", "عطر مینا",
-                            "عطر ایرانی", "عطر فرانسوی", "عطر ترکی"],
-
-    # --- Shoes ---
-    "Shoes (کفش)":         ["کفش", "کفش زنانه", "کفش مردانه", "چکمه", "کتونی",
-                           "کفش پاشنه‌بلند", "کفش ورزشی", "کتونی زنانه", "کتونی مردانه",
-                           "صندل", "نیم‌بوت", "بوت", "کفش چرمی"],
-
-    # --- Cosmetics & Skincare ---
-    "Cosmetics (آرایش/مراقبت)": ["آرایش", "رژلب", "ریمل", "کرم", "مرطوب‌کننده",
-                               "سرم", "ماسک", "ژل", "لوشن", "ضدآفتاب", "پرایمر",
-                               "فاندیشن", "پودر", "بلاش", "ریمل", "سایه چشم",
-                               "برش", "هایلایتر", "کنتور", "بازیابی", "مراقبت از پوست",
-                               "ماسک صورت", "کرم شب", "کرم روز", "ضدچروز"],
-
-    # --- Home & Living ---
-    "Home Decor (دکوراسیون)": ["دکوراسیون", "پرتره", "قاب عکس", "شمعدان",
-                              "روشنایی", "لوستر", "شمع", "گلدان", "پرگار",
-                              "دکور خانه", "فرش", "سجاده", "پرده"],
-
-    # --- Food & Health ---
-    "Food & Health (سلامت/غذا)": ["سالم", "مکمل", "ویتامین", "پروتئین", "غذای سالم",
-                                 "چای", "عسل", "گردو", "میوه خشک", "پروتئین",
-                                 "کراتین", "بیوتین", "مغذی", "سوپلیمنت"],
-}
 
 # Buyer-intent signals used for a fast, offline (non-AI) first pass over comments.
 PRICE_QUESTION_MARKERS = ["قیمت", "چند", "چنده", "چقدر", "قبمت", "قیمتش", "چقده"]
@@ -101,6 +32,9 @@ class MarketAnalyzer:
     def __init__(self, data_dir="data"):
         self.data_dir = data_dir
         self.groq_client = Groq() if (Groq and os.environ.get("GROQ_API_KEY")) else None
+        # Product categorizer: offline scoring keyword/brand matcher, with an
+        # optional Groq LLM pass to resolve posts the offline layer can't place.
+        self.classifier = ProductClassifier(groq_client=self.groq_client)
 
     # ------------------------------------------------------------------ files
     def _get_latest_file(self, target_username: str) -> str:
@@ -125,15 +59,12 @@ class MarketAnalyzer:
         prices = prices.where(prices >= 1000, np.nan)
         return prices
 
-    @staticmethod
-    def _classify_product(text: str) -> str:
-        if not isinstance(text, str):
-            return "Other"
-        for label, keywords in PRODUCT_TAXONOMY.items():
-            for kw in keywords:
-                if kw in text:
-                    return label
-        return "Other"
+    def _classify_products(self, descriptions) -> list:
+        """Batch-categorize every post description. Delegates to
+        ProductClassifier (offline scoring + optional LLM). Batching lets the
+        LLM pass resolve many posts in a couple of calls instead of one per
+        row, and shares a cache across duplicate descriptions."""
+        return self.classifier.classify_many(list(descriptions))
 
     @staticmethod
     def _extract_hashtags(text: str):
@@ -185,7 +116,7 @@ class MarketAnalyzer:
         df["description"] = df["description"].fillna("")
         df["comments"] = df["comments"].fillna("")
 
-        df["category"] = df["description"].apply(self._classify_product)
+        df["category"] = self._classify_products(df["description"])
         df["comment_count"] = df["comments"].apply(
             lambda c: 0 if not str(c).strip() else len([l for l in str(c).split("\n") if l.strip()])
         )

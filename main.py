@@ -11,6 +11,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from core.browser_manager import BrowserManager
 from auth.rubino_auth import RubikaAuth
 from platforms.rubino_scraper import RubinoScraper
+from platforms.telegram_scraper import TelegramScraper
 from core.analyzer import MarketAnalyzer, CompetitorComparator
 from core.report_generator import ReportGenerator
 from core.packager import ClientPackager
@@ -29,7 +30,29 @@ def ask(prompt, default=None):
     return val if val else default
 
 
-def scrape_profile(username, max_posts):
+def scrape_profile(username, max_posts, platform="rubino"):
+    """Scrape a single profile/channel. Returns True on success."""
+    if platform == "telegram":
+        return _scrape_telegram(username, max_posts)
+    return _scrape_rubino(username, max_posts)
+
+
+def _scrape_telegram(username, max_posts):
+    """Scrape a public Telegram channel via its web preview (no account needed)."""
+    try:
+        print(f"\n[*] Initializing Telegram scraping pipeline for channel: @{username}")
+        # No Selenium driver required; TelegramScraper is pure HTTP.
+        scraper = TelegramScraper(driver=None, target=username)
+        results = scraper.run(max_posts=max_posts)
+        return bool(results)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[!] Telegram scraping failed for @{username}: {e}")
+        return False
+
+
+def _scrape_rubino(username, max_posts):
     """Scrape a single profile. Returns True on success."""
     raw_driver = None
     try:
@@ -71,7 +94,15 @@ def main():
     print_banner()
 
     # ---------------------------------------------------------------- inputs
-    client_username = ask("[?] Enter the CLIENT Rubino username (without @): ")
+    platform_input = ask(
+        "[?] Platform: rubino or telegram? (rubino/telegram): ", "rubino"
+    ).lower()
+    platform = "telegram" if platform_input.startswith("t") else "rubino"
+
+    if platform == "telegram":
+        client_username = ask("[?] Enter the CLIENT Telegram channel (without @): ")
+    else:
+        client_username = ask("[?] Enter the CLIENT Rubino username (without @): ")
     if not client_username:
         print("[!] Client username cannot be empty. Exiting.")
         sys.exit(1)
@@ -82,8 +113,14 @@ def main():
     competitor_usernames = [c.strip() for c in competitors_raw.split(",") if c.strip()]
 
     mode = ask("[?] Scrape fresh data? (y/n - 'n' analyzes latest saved files): ", "n").lower()
-    run_nlp_input = ask("[?] Run AI comment analysis (needs GROQ_API_KEY)? (y/n): ", "y").lower()
-    run_nlp = (run_nlp_input == "y")
+    if platform == "telegram":
+        # The public web preview exposes no comments, so comment-level AI analysis
+        # has nothing to work on. Skip it automatically to save time and API cost.
+        run_nlp = False
+        print("[i] Telegram preview has no comments; AI comment analysis is skipped.")
+    else:
+        run_nlp_input = ask("[?] Run AI comment analysis (needs GROQ_API_KEY)? (y/n): ", "y").lower()
+        run_nlp = (run_nlp_input == "y")
     make_pdf_input = ask("[?] Generate PDF report? (y/n): ", "y").lower()
     make_pdf = (make_pdf_input == "y")
     make_zip_input = ask("[?] Package everything into a client .zip? (y/n): ", "y").lower()
@@ -99,7 +136,7 @@ def main():
         max_posts = int(max_posts_input) if (max_posts_input and max_posts_input.isdigit()) else None
 
         for uname in all_usernames:
-            ok = scrape_profile(uname, max_posts)
+            ok = scrape_profile(uname, max_posts, platform=platform)
             if not ok and uname == client_username:
                 print("[!] Client scraping failed. Aborting.")
                 sys.exit(1)
