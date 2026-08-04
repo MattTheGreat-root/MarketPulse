@@ -219,6 +219,24 @@ def normalize(text: str) -> str:
     return text.strip()
 
 
+# Payment / promo jargon that collides with product keywords and must be
+# stripped before scoring. Iranian shops widely advertise installment payment
+# (Snapp Pay / اسنپ‌پی) and cashback into a digital "wallet" (کیف پول), which
+# would otherwise register as a Bag/Wallet product. These are phrases, matched
+# after normalization. A real wallet product ("کیف پول چرم") still scores via
+# its own material/brand words; the bare cashback phrase does not.
+_NOISE_PHRASES = [
+    "کیف پولتون", "کیف پولت", "کیف پولتان", "کیف پول شما", "کیف پول دیجیتال",
+    "به کیف پول", "کیف پول اسنپ",
+]
+
+
+def _strip_noise(norm_text: str) -> str:
+    for phrase in _NOISE_PHRASES:
+        norm_text = norm_text.replace(phrase, " ")
+    return norm_text
+
+
 # Token = run of Persian or Latin letters/digits. Used for whole-word matching.
 _TOKEN_RE = re.compile(r"[a-z0-9]+|[؀-ۿ]+")
 
@@ -263,6 +281,7 @@ def classify_offline(text: str) -> str:
     norm = normalize(text)
     if not norm:
         return FALLBACK
+    norm = _strip_noise(norm)
     tokens = _tokens(norm)
 
     scores = {}

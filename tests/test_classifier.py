@@ -36,6 +36,8 @@ CASES = [
     # --- homonym traps ---
     ("فروشگاه حضوری همه روزه از ساعت ۱۱ صبح تا ۹ شب", "Other"),   # ساعت = o'clock
     ("آدرس: خیابان ولیعصر، پلاک ۱۰۱", "Other"),                   # پلاک = building no.
+    ("با اسنپ‌پی خرید کن، ۷٪ مبلغ به کیف پولتون برمی‌گرده", "Other"),  # e-wallet cashback, not a Bag
+    ("کیف پول چرم طبیعی مردانه جادار", "Wallet"),                 # a real wallet product still classifies
     # --- cross-domain: prove generality ---
     ("النگو طلاروس ۶ عددی، سرویس کامل", "Bangle"),
     ("گردنبند نقره با آبکاری طلا", "Necklace"),
