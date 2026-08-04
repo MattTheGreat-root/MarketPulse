@@ -43,7 +43,7 @@ MarketPulse/
 The pipeline is organized into four sequential phases:
 
 ### 1. Scraping Phase
-- **Entry**: `main.py` prompts for platform, client username, competitors, and scrape mode.
+- **Entry**: `main.py` selects a run mode (`mini`/`normal`/`pro`) that determines post count, competitor cap, comments/AI, report type, and packaging; the operator supplies only mode, platform, and target handle(s).
 - **Platform scrapers** inherit from `BaseScraper` (`core/base_scraper.py`) and implement `navigate_to_page()` and `scrape_all_posts()`.
 - Each scraper produces a CSV (and XLSX) file in `data/` with a consistent schema: `post_index`, `description`, `price`, `engagement`, `comments`.
 - **Rubino** uses Selenium with an isolated Chrome profile (`chrome_profile_rubino/`) and requires manual login via `RubikaAuth`.
@@ -148,20 +148,37 @@ The Groq API key is optional -- AI comment analysis is skipped when the key is a
 
 ## Usage
 
-Run the pipeline from the project root:
+Runs are driven by a **mode** (product tier), a **platform**, and the target
+handle(s). Each mode fully configures the run, so there is no long
+questionnaire.
+
+| Mode | Posts | Competitors | Comments/AI | Report | .zip | Use |
+|------|-------|-------------|-------------|--------|------|-----|
+| `mini` | 15 | 1 max | no | mini | no | Free lead magnet for cold outreach |
+| `normal` | 100 | up to 3 | Rubino only | full | no | Paid full report |
+| `pro` | all | all | Rubino only | full | yes | Everything the engine can do |
+
+> Comment-based AI analysis only runs on platforms whose scraper captures
+> comments (currently Rubino). Telegram/Bale web previews expose no comments
+> yet, so it is skipped there automatically.
+
+**Fast path (CLI args, zero prompts):**
 ```
-python main.py
+python main.py <mode> <platform> <client> [comp1,comp2] [saved]
+```
+- `mode`: `mini` | `normal` | `pro` (or `m` | `n` | `p`)
+- `platform`: `r` (rubino) | `b` (bale) | `t` (telegram)
+- add a trailing `saved` to reuse the latest saved CSVs instead of scraping
+
+```
+python main.py mini b oxostreetwear            # free Bale mini report, scrape fresh
+python main.py normal r myshop rival1,rival2   # full Rubino report vs 2 competitors
+python main.py pro t oxo comp1 saved           # pro report from latest saved data
 ```
 
-The CLI prompts for:
-1. Platform: rubino, telegram, or bale
-2. Client username (without @)
-3. Competitor usernames (comma-separated, optional)
-4. Scrape fresh data or analyze latest saved files
-5. AI comment analysis (requires GROQ_API_KEY, skipped for Telegram/Bale)
-6. PDF report generation
-7. Client .zip packaging
-8. Report type: full or mini
+**Interactive path:** run `python main.py` with no (or partial) args and it
+prompts only for what's missing — mode, platform letter, client, competitors,
+and whether to scrape fresh or reuse saved data.
 
 ## Testing
 
