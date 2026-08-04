@@ -18,6 +18,57 @@ from core.report_generator import ReportGenerator
 from core.packager import ClientPackager
 
 
+# ---------------------------------------------------------------------------
+# Run modes. Each mode is a product tier and fully determines the run so the
+# operator never answers a questionnaire — just picks a mode, a platform, and
+# the target(s).
+#
+#   mini   - FREE lead magnet. 15 posts, at most 1 competitor, mini report,
+#            no comments/NLP, no zip. This is what you send in cold outreach.
+#   normal - Paid full report. More posts + competitors, full report, comments
+#            + AI comment analysis on Rubino (Telegram/Bale previews expose no
+#            comments yet), no zip.
+#   pro    - Everything the engine can do: max posts, all competitors, comments
+#            + NLP, full report, packaged client .zip deliverable.
+#
+# `comments` here means "attempt comment-based AI analysis". It only has an
+# effect on platforms whose scraper actually captures comments (currently
+# Rubino); Telegram/Bale are auto-skipped until their scrapers grow comments.
+# ---------------------------------------------------------------------------
+MODES = {
+    "mini": {
+        "label": "MINI (free lead magnet)",
+        "max_posts": 15,
+        "max_competitors": 1,
+        "comments": False,
+        "report": "mini",
+        "zip": False,
+    },
+    "normal": {
+        "label": "NORMAL (full report)",
+        "max_posts": 100,
+        "max_competitors": 3,
+        "comments": True,
+        "report": "full",
+        "zip": False,
+    },
+    "pro": {
+        "label": "PRO (maximum)",
+        "max_posts": None,       # None = all available
+        "max_competitors": None,  # None = all given
+        "comments": True,
+        "report": "full",
+        "zip": True,
+    },
+}
+
+PLATFORMS = {"r": "rubino", "t": "telegram", "b": "bale"}
+
+# Platforms whose scraper currently captures comments (so AI comment analysis
+# can run). Telegram/Bale web previews don't expose comments yet.
+COMMENT_CAPABLE = {"rubino"}
+
+
 def print_banner():
     print("""
     =========================================
@@ -108,66 +159,133 @@ def analyze_profile(analyzer, username, run_nlp, label="profile"):
         return None
 
 
+# ---------------------------------------------------------------------------
+# Input handling: minimal interactive prompts, with optional CLI args as a
+# fast path.  Usage:
+#     python main.py [mode] [platform] [client] [comp1,comp2] [saved]
+# Any missing piece is asked for; extras like posts/zip/nlp come from the mode.
+# ---------------------------------------------------------------------------
+def resolve_mode(raw):
+    raw = (raw or "").strip().lower()
+    aliases = {"m": "mini", "n": "normal", "p": "pro"}
+    raw = aliases.get(raw, raw)
+    return raw if raw in MODES else None
+
+
+def resolve_platform(raw):
+    raw = (raw or "").strip().lower()
+    if raw in PLATFORMS:            # r / t / b
+        return PLATFORMS[raw]
+    if raw in PLATFORMS.values():   # full name
+        return raw
+    return None
+
+
+def gather_run_config(argv):
+    """Build the run config from CLI args first, prompting only for what's
+    missing. Returns a dict describing the whole run."""
+    args = list(argv)
+
+    # --- mode ---
+    mode = resolve_mode(args[0]) if len(args) >= 1 else None
+    while not mode:
+        mode = resolve_mode(ask("[?] Mode: mini (free) / normal / pro: ", "mini"))
+        if not mode:
+            print("    Please enter one of: mini, normal, pro.")
+    cfg = dict(MODES[mode])
+    cfg["mode"] = mode
+
+    # --- platform ---
+    platform = resolve_platform(args[1]) if len(args) >= 2 else None
+    while not platform:
+        platform = resolve_platform(ask("[?] Platform: r (rubino) / b (bale) / t (telegram): ", "r"))
+        if not platform:
+            print("    Please enter one of: r, b, t.")
+    cfg["platform"] = platform
+
+    # --- client ---
+    client = args[2] if len(args) >= 3 else None
+    while not client:
+        client = ask(f"[?] Client {platform} username/channel (without @): ")
+        if not client:
+            print("    Client cannot be empty.")
+    cfg["client"] = client.lstrip("@")
+
+    # --- competitors (respect the mode cap) ---
+    if len(args) >= 4:
+        comps_raw = args[3]
+    else:
+        cap = cfg["max_competitors"]
+        cap_txt = "1 max" if cap == 1 else (f"up to {cap}" if cap else "any number")
+        comps_raw = ask(f"[?] Competitor(s), comma-separated ({cap_txt}, ENTER to skip): ", "")
+    competitors = [c.strip().lstrip("@") for c in (comps_raw or "").split(",") if c.strip()]
+    if cfg["max_competitors"] is not None and len(competitors) > cfg["max_competitors"]:
+        dropped = competitors[cfg["max_competitors"]:]
+        competitors = competitors[:cfg["max_competitors"]]
+        print(f"[i] {cfg['label']} allows {cfg['max_competitors']} competitor(s); "
+              f"ignoring: {', '.join(dropped)}")
+    cfg["competitors"] = competitors
+
+    # --- fresh vs saved data ---
+    saved_flag = any(a.strip().lower() in ("saved", "--saved", "-s") for a in args[4:])
+    if saved_flag:
+        cfg["scrape"] = False
+    else:
+        # Only ask if not already told via args; default is to scrape fresh.
+        if len(args) >= 5:
+            cfg["scrape"] = True
+        else:
+            ans = ask("[?] Scrape fresh data? (Y/n — 'n' reuses latest saved CSVs): ", "y").lower()
+            cfg["scrape"] = not ans.startswith("n")
+
+    return cfg
+
+
+def print_plan(cfg):
+    comment_note = ""
+    if cfg["comments"] and cfg["platform"] not in COMMENT_CAPABLE:
+        comment_note = f"  (skipped: {cfg['platform']} preview has no comments yet)"
+    print(f"\n[=] Run plan")
+    print(f"    Mode        : {cfg['label']}")
+    print(f"    Platform    : {cfg['platform']}")
+    print(f"    Client      : @{cfg['client']}")
+    print(f"    Competitors : {', '.join('@'+c for c in cfg['competitors']) or '—'}")
+    print(f"    Posts/target: {cfg['max_posts'] if cfg['max_posts'] is not None else 'all'}")
+    print(f"    Comments/AI : {'yes' if cfg['comments'] else 'no'}{comment_note}")
+    print(f"    Report      : {cfg['report']}")
+    print(f"    Package .zip: {'yes' if cfg['zip'] else 'no'}")
+    print(f"    Data        : {'scrape fresh' if cfg['scrape'] else 'reuse latest saved'}\n")
+
+
 def main():
     print_banner()
 
-    # ---------------------------------------------------------------- inputs
-    platform_input = ask(
-        "[?] Platform: rubino, telegram, or bale? (rubino/telegram/bale): ", "rubino"
-    ).lower()
-    if platform_input.startswith("t"):
-        platform = "telegram"
-    elif platform_input.startswith("b"):
-        platform = "bale"
-    else:
-        platform = "rubino"
+    cfg = gather_run_config(sys.argv[1:])
+    print_plan(cfg)
 
-    if platform == "telegram":
-        client_username = ask("[?] Enter the CLIENT Telegram channel (without @): ")
-    elif platform == "bale":
-        client_username = ask("[?] Enter the CLIENT Bale channel (without @): ")
-    else:
-        client_username = ask("[?] Enter the CLIENT Rubino username (without @): ")
-    if not client_username:
-        print("[!] Client username cannot be empty. Exiting.")
-        sys.exit(1)
-
-    competitors_raw = ask(
-        "[?] Enter COMPETITOR usernames (comma-separated, or ENTER to skip): ", ""
-    )
-    competitor_usernames = [c.strip() for c in competitors_raw.split(",") if c.strip()]
-
-    mode = ask("[?] Scrape fresh data? (y/n - 'n' analyzes latest saved files): ", "n").lower()
-    if platform in ("telegram", "bale"):
-        # The public web previews expose no comments, so comment-level AI
-        # analysis has nothing to work on. Skip it automatically to save time
-        # and API cost.
-        run_nlp = False
-        print(f"[i] {platform.capitalize()} preview has no comments; AI comment analysis is skipped.")
-    else:
-        run_nlp_input = ask("[?] Run AI comment analysis (needs GROQ_API_KEY)? (y/n): ", "y").lower()
-        run_nlp = (run_nlp_input == "y")
-    make_pdf_input = ask("[?] Generate PDF report? (y/n): ", "y").lower()
-    make_pdf = (make_pdf_input == "y")
-    make_zip_input = ask("[?] Package everything into a client .zip? (y/n): ", "y").lower()
-    make_zip = (make_zip_input == "y")
-    report_type_input = ask("[?] Report type: full (detailed) or mini (~4 pages)? (full/mini): ", "full").lower()
-    is_mini = report_type_input == "mini"
-
+    platform = cfg["platform"]
+    client_username = cfg["client"]
+    competitor_usernames = cfg["competitors"]
     all_usernames = [client_username] + competitor_usernames
 
-    # ----------------------------------------------------------- scrape phase
-    if mode == "y":
-        max_posts_input = ask("[?] Max posts per profile (ENTER = all): ", None)
-        max_posts = int(max_posts_input) if (max_posts_input and max_posts_input.isdigit()) else None
+    # Comment-based AI analysis: requested by the mode AND supported by the
+    # platform's scraper. Telegram/Bale previews have no comments (yet), so it
+    # is skipped there automatically instead of silently doing nothing.
+    run_nlp = cfg["comments"] and platform in COMMENT_CAPABLE
+    if cfg["comments"] and not run_nlp:
+        print(f"[i] {platform.capitalize()} has no comments; AI comment analysis skipped.")
 
+    is_mini = cfg["report"] == "mini"
+
+    # ----------------------------------------------------------- scrape phase
+    if cfg["scrape"]:
         for uname in all_usernames:
-            ok = scrape_profile(uname, max_posts, platform=platform)
+            ok = scrape_profile(uname, cfg["max_posts"], platform=platform)
             if not ok and uname == client_username:
                 print("[!] Client scraping failed. Aborting.")
                 sys.exit(1)
     else:
-        print("\n[*] Skipping scraper. Using latest saved data for all profiles.")
+        print("[*] Skipping scraper. Using latest saved data for all profiles.")
 
     # --------------------------------------------------------- analysis phase
     print("\n[*] Running analysis...")
@@ -202,18 +320,18 @@ def main():
             client_insights=client_insights,
             comparison=comparison,
             competitor_insights=competitor_insights,
-            make_pdf=make_pdf,
+            make_pdf=True,
         )
     else:
         paths = reporter.generate_report(
             client_insights=client_insights,
             comparison=comparison,
             competitor_insights=competitor_insights,
-            make_pdf=make_pdf,
+            make_pdf=True,
         )
 
     # ---------------------------------------------------------- package phase
-    if make_zip:
+    if cfg["zip"]:
         packager = ClientPackager()
         packager.package_deliverables(
             target_username=client_username,
