@@ -118,17 +118,25 @@ class ReportGenerator:
 
     def generate_mini_report(self, client_insights: dict, comparison: dict | None = None,
                                  competitor_insights: list | None = None,
-                                 make_pdf: bool = True, brand: str = "MarketPulse"):
+                                 make_pdf: bool = True, brand: str = "MarketPulse",
+                                 contact: str | None = None):
         """
-        Generates a concise ~4-page report covering the most essential insights.
-        Excludes AI deep-dive, competitor comparison, demand signals, hashtags,
-        and engagement trend chart — keeping the file size small and the focus
-        on actionable category, pricing, and top-post data.
+        Generates a concise ~4-page report that doubles as a SALES tool.
+
+        This is the free lead-magnet handed to a prospective shop owner. It shows
+        just enough real data to prove value, then deliberately surfaces the gaps
+        (vs competitors when provided, or the competitor blind-spot when not) and
+        closes with a call-to-action so the owner wants to buy the full report.
+
+        Excludes the AI deep-dive, full advice list, demand signals, hashtags and
+        the engagement trend chart — those stay locked behind the paid report.
+        `contact` is an optional line (phone / @id) placed in the CTA banner.
         """
         username = client_insights["username"]
         competitor_insights = competitor_insights or []
 
-        body = self._build_mini_body(client_insights, comparison, competitor_insights, brand)
+        body = self._build_mini_body(client_insights, comparison, competitor_insights,
+                                     brand, contact)
         styled_html = self._wrap_html(body, username, brand)
 
         html_path = os.path.join(self.output_dir, f"{username}_mini_report.html")
@@ -176,7 +184,7 @@ class ReportGenerator:
         return "\n".join(s for s in sections if s)
 
     # -------------------------------------------------------- mini body builder
-    def _build_mini_body(self, client, comparison, competitors, brand):
+    def _build_mini_body(self, client, comparison, competitors, brand, contact=None):
         sections = [
             self._cover(client, brand),
             self._executive_summary(client, comparison),
@@ -184,7 +192,9 @@ class ReportGenerator:
             self._category_section(client),
             self._pricing_section(client),
             self._mini_competitor_section(client, comparison, competitors),
+            self._mini_gap_section(client, comparison, competitors),
             self._top_posts_section(client),
+            self._mini_cta_section(client, comparison, competitors, brand, contact),
             self._footer(brand),
         ]
         return "\n".join(s for s in sections if s)
@@ -616,6 +626,145 @@ class ReportGenerator:
         </section>
         """
 
+    # -------------------------------------------------- mini gap / FOMO section
+    def _mini_gap_section(self, client, comparison, competitors):
+        """The conversion driver of the free report.
+
+        Turns the data into a short list of concrete gaps the owner is losing
+        money on right now. When a competitor is provided it frames each gap as
+        "your rival is beating you here"; without a competitor it uses the
+        page's own blind spots. Either way it ends on a locked-teaser that only
+        the paid report answers — that tension is what sells the upgrade."""
+        gaps = []          # (icon, headline, detail) — the visible pain points
+        has_comp = bool(comparison and competitors)
+
+        cats = client.get("categories", {})
+        momentum = client.get("momentum", {})
+        signals = client.get("demand_signals", {})
+
+        if has_comp:
+            pos = comparison.get("positioning", {})
+            eng_vs = pos.get("engagement_vs_market_pct")
+            rank = pos.get("engagement_rank")
+            field = pos.get("field_size")
+            comp_names = comparison.get("competitors", [])
+            comp_label = "@" + comp_names[0] if len(comp_names) == 1 else "رقبای شما"
+
+            if eng_vs is not None and eng_vs < 0:
+                gaps.append((
+                    "📉",
+                    f"تعامل شما {abs(eng_vs)}٪ پایین‌تر از {comp_label} است",
+                    "یعنی هر پست شما مخاطب و مشتری بالقوه کمتری نسبت به رقیب جذب می‌کند. "
+                    "این فاصله مستقیماً روی فروش شما اثر می‌گذارد."
+                ))
+            elif eng_vs is not None and eng_vs > 0:
+                gaps.append((
+                    "⚠️",
+                    f"شما {eng_vs}٪ جلوتر از رقبا هستید، اما این برتری شکننده است",
+                    "رقبا در حال رشد هستند؛ بدون برنامه محتوایی مشخص، این فاصله به‌سرعت از بین می‌رود."
+                ))
+            if rank and field and rank > 1:
+                gaps.append((
+                    "🏆",
+                    f"جایگاه شما: رتبه {rank} از {field}",
+                    "رتبه یک این بازار سهم بیشتری از خریداران را می‌بلعد. "
+                    "می‌دانید دقیقاً چه کاری او را در صدر نگه داشته؟"
+                ))
+
+            # A category competitors win that the client under-serves.
+            client_cats = {c["category"]: c for c in cats.get("breakdown", [])}
+            for c in competitors:
+                star = (c.get("categories", {}) or {}).get("star_category")
+                if star and (star not in client_cats or client_cats[star]["share_pct"] < 10):
+                    gaps.append((
+                        "🎯",
+                        f"رقیب با دسته «{star}» برنده می‌شود؛ جای این محصول در پیج شما خالی است",
+                        "این یک فرصت فروش آماده است که همین حالا از دست می‌دهید."
+                    ))
+                    break
+        else:
+            # No competitor supplied: sell the blind spot itself.
+            gaps.append((
+                "🔍",
+                "شما هنوز نمی‌دانید رقیب‌تان کجا از شما جلوتر است",
+                "بدون مقایسه با رقیب، نمی‌توان فهمید کدام محصول، قیمت یا سبک محتوا "
+                "مشتری را به سمت او می‌برد. نسخه کامل این گزارش دقیقاً همین را نشان می‌دهد."
+            ))
+            trend = momentum.get("trend")
+            if trend == "declining":
+                gaps.append((
+                    "📉",
+                    "روند تعامل پیج شما نزولی است",
+                    "پست‌های اخیر شما ضعیف‌تر از قبل عمل می‌کنند — علامت هشدار جدی برای فروش."
+                ))
+            star = cats.get("star_category")
+            if star:
+                gaps.append((
+                    "🎯",
+                    f"بیشترین فروش شما به «{star}» وابسته است",
+                    "تکیه به یک دسته یعنی ریسک بالا. نسخه کامل، دسته‌های سودآور بعدی شما را می‌یابد."
+                ))
+
+        # Unanswered buyer questions are pure lost money — always compelling.
+        pq = signals.get("price_questions", 0)
+        if pq:
+            gaps.append((
+                "💬",
+                f"{pq} کامنت مستقیماً درباره قیمت پرسیده‌اند",
+                "هر کدام یک مشتری داغ است. پاسخ سریع و شفاف، این‌ها را به فروش تبدیل می‌کند."
+            ))
+
+        if not gaps:
+            return ""
+
+        cards = "".join(
+            f"<div class='gap-card'><span class='gap-icon'>{icon}</span>"
+            f"<div><b>{_e(head)}</b><p>{_e(detail)}</p></div></div>"
+            for icon, head, detail in gaps[:4]
+        )
+        title = "۷. جایی که در حال از دست دادن فروش هستید"
+        lead = ("این‌ها فاصله‌های واقعی بین شما و رقباست — بر اساس داده‌های همین گزارش."
+                if has_comp else
+                "این‌ها نقاط کوری هستند که همین حالا روی فروش شما اثر می‌گذارند.")
+        return f"""
+        <section class="section page-break">
+            <h2>{title}</h2>
+            <p>{lead}</p>
+            <div class="gap-list">{cards}</div>
+        </section>
+        """
+
+    # -------------------------------------------------------- mini CTA section
+    def _mini_cta_section(self, client, comparison, competitors, brand, contact=None):
+        """Closing sales banner. Lists what the paid report unlocks and gives a
+        single clear next step. Locked-item framing creates the desire to buy."""
+        has_comp = bool(comparison and competitors)
+        locked = [
+            "تحلیل هوش مصنوعی روی کامنت‌ها: مشتری واقعاً چه می‌خواهد و چه شکایتی دارد",
+            "توصیه‌های راهبردی گام‌به‌گام برای افزایش فروش",
+            "تحلیل کامل قیمت‌گذاری و پیدا کردن سودآورترین بازه قیمتی",
+            "تحلیل هشتگ‌ها و بهترین زمان انتشار",
+        ]
+        if has_comp:
+            locked.insert(0, "مقایسه کامل و عمیق با تمام رقبا، نه فقط یک جدول ساده")
+        else:
+            locked.insert(0, "مقایسه کامل با رقبای شما تا ببینید دقیقاً کجا عقب هستید")
+
+        items = "".join(f"<li>{_e(x)}</li>" for x in locked)
+        contact_line = (
+            f"<div class='cta-contact'>برای دریافت گزارش کامل: <b>{_e(contact)}</b></div>"
+            if contact else
+            "<div class='cta-contact'>برای دریافت گزارش کامل همین حالا پیام دهید.</div>"
+        )
+        return f"""
+        <section class="section cta-banner">
+            <div class="cta-head">این فقط پیش‌نمایش رایگان بود</div>
+            <p class="cta-sub">گزارش کامل {_e(brand)} این موارد قفل‌شده را برای شما باز می‌کند:</p>
+            <ul class="cta-locked">{items}</ul>
+            {contact_line}
+        </section>
+        """
+
     # ------------------------------------------------------------ advice section
     def _advice_section(self, comparison):
         advice = comparison.get("advice", [])
@@ -792,10 +941,38 @@ class ReportGenerator:
     }}
     .advice-card p {{ margin: 0; font-size: 12.5px; }}
 
+    /* Gap / FOMO cards (mini sales report) */
+    .gap-list {{ display: flex; flex-direction: column; gap: 10px; }}
+    .gap-card {{
+        display: flex; align-items: flex-start; gap: 12px;
+        background: #fdf1f1; border-right: 4px solid #d64545;
+        padding: 12px 14px; border-radius: 8px;
+    }}
+    .gap-icon {{ font-size: 20px; line-height: 1.2; }}
+    .gap-card b {{ display: block; color: #a12727; font-size: 13.5px; margin-bottom: 3px; }}
+    .gap-card p {{ margin: 0; font-size: 12px; color: #5a4141; }}
+
+    /* CTA banner (mini sales report) */
+    .cta-banner {{
+        background: linear-gradient(135deg, #1a2a4a 0%, #2c6fbb 100%);
+        color: #fff; border-radius: 10px; padding: 22px 24px; margin-top: 24px;
+    }}
+    .cta-head {{ font-size: 20px; font-weight: bold; color: #ffd479; margin-bottom: 6px; }}
+    .cta-sub {{ font-size: 13px; opacity: .95; margin: 0 0 12px 0; color: #fff; }}
+    .cta-locked {{ list-style: none; padding: 0; margin: 0 0 16px 0; }}
+    .cta-locked li {{
+        padding: 6px 0 6px 0; font-size: 12.5px; border-bottom: 1px solid rgba(255,255,255,.15);
+    }}
+    .cta-locked li::before {{ content: "🔒 "; }}
+    .cta-contact {{
+        background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.3);
+        border-radius: 8px; padding: 12px 14px; text-align: center; font-size: 14px;
+    }}
+    .cta-contact b {{ color: #ffd479; }}
+
     /* Disclaimer */
     .disclaimer {{ margin-top: 40px; padding-top: 14px; border-top: 1px solid #eee; font-size: 10.5px; color: #999; }}
-    .copy {{ text-align: center; margin-top: 8px; }}
-</style>
+    .copy {{ text-align: center; margin-top: 8px; }}</style>
 </head>
 <body>
 {body}

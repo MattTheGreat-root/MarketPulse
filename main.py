@@ -321,6 +321,10 @@ def main():
             comparison=comparison,
             competitor_insights=competitor_insights,
             make_pdf=True,
+            # Optional CTA contact line for the free lead-magnet report. Set
+            # MARKETPULSE_CONTACT in .env (e.g. your phone or @id) so the "buy
+            # the full report" banner tells the shop owner how to reach you.
+            contact=os.getenv("MARKETPULSE_CONTACT"),
         )
     else:
         paths = reporter.generate_report(
