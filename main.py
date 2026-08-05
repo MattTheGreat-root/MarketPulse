@@ -23,7 +23,7 @@ from core.packager import ClientPackager
 # operator never answers a questionnaire — just picks a mode, a platform, and
 # the target(s).
 #
-#   mini   - FREE lead magnet. 15 posts, at most 1 competitor, mini report,
+#   mini   - FREE lead magnet. 10 posts, at most 1 competitor, mini report,
 #            no comments/NLP, no zip. This is what you send in cold outreach.
 #   normal - Paid full report. More posts + competitors, full report, comments
 #            + AI comment analysis on Rubino (Telegram/Bale previews expose no
@@ -38,7 +38,7 @@ from core.packager import ClientPackager
 MODES = {
     "mini": {
         "label": "MINI (free lead magnet)",
-        "max_posts": 15,
+        "max_posts": 10,
         "max_competitors": 1,
         "comments": False,
         "report": "mini",
