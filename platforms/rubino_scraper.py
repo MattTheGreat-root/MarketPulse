@@ -52,11 +52,19 @@ class RubinoScraper(BaseScraper):
             actual_search_input.clear()
             actual_search_input.send_keys(self.target)
             actual_search_input.send_keys(Keys.ENTER)
-            
+
             time.sleep(1.5)
 
-            exact_result_xpath = f"//div[contains(text(), '{self.target}')] | //span[contains(text(), '{self.target}')]"
-            target_profile_item = wait.until(EC.presence_of_element_located((By.XPATH, exact_result_xpath)))
+            # XPath with case-insensitive matching: translate both the element text
+            # and the target to lowercase before comparing. This prevents failures
+            # when the user types "Faiaz9090" but Rubika returns "faiaz9090".
+            target_lower = self.target.lower()
+            case_insensitive_xpath = (
+                f"//div[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{target_lower}')] | "
+                f"//span[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{target_lower}')]"
+            )
+            target_profile_item = wait.until(EC.presence_of_element_located((By.XPATH, case_insensitive_xpath)))
+
             self.driver.execute_script("arguments[0].click();", target_profile_item)
 
             time.sleep(1.5)
@@ -68,7 +76,7 @@ class RubinoScraper(BaseScraper):
             self.driver.get("https://m.rubika.ir/")
             time.sleep(2)
             return False
-        
+
     def _find_scrollable_ancestor(self):
         return self.driver.execute_script(
             """
