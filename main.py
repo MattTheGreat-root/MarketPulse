@@ -146,9 +146,9 @@ def _scrape_rubino(username, max_posts):
             raw_driver.quit()
 
 
-def analyze_profile(analyzer, username, run_nlp, label="profile"):
+def analyze_profile(analyzer, username, run_nlp, label="profile", hint=None):
     try:
-        insights = analyzer.analyze_profile(username, top_n=5, run_nlp=run_nlp)
+        insights = analyzer.analyze_profile(username, top_n=5, run_nlp=run_nlp, hint=hint)
         if insights.get("has_data"):
             eng = insights["engagement"]
             print(f"  -> [{label}] @{username}: {insights['post_count']} posts | "
@@ -226,8 +226,16 @@ def gather_run_config(argv):
               f"ignoring: {', '.join(dropped)}")
     cfg["competitors"] = competitors
 
-    # --- fresh vs saved data ---
+    # --- fresh vs saved data (compute early, needed by hint prompt below) ---
     saved_flag = any(a.strip().lower() in ("saved", "--saved", "-s") for a in args[4:])
+
+    # --- hint (optional domain: shoes/clothing/jewelry/bags/...) ---
+    hint_raw = args[4] if len(args) >= 5 and not any(a.strip().lower() in ("saved", "--saved", "-s") for a in [args[4]]) else None
+    if not hint_raw and not saved_flag:
+        hint_raw = ask("[?] Domain hint for client (shoes/clothing/jewelry/bags/watches/beauty, ENTER to auto): ", "")
+    cfg["hint"] = hint_raw.strip() if hint_raw else None
+
+    # --- fresh vs saved data ---
     if saved_flag:
         cfg["scrape"] = False
     else:
@@ -291,7 +299,8 @@ def main():
     print("\n[*] Running analysis...")
     analyzer = MarketAnalyzer()
 
-    client_insights = analyze_profile(analyzer, client_username, run_nlp, label="CLIENT")
+    client_insights = analyze_profile(analyzer, client_username, run_nlp, label="CLIENT",
+                                      hint=cfg.get("hint"))
     if not client_insights or not client_insights.get("has_data"):
         print("[!] No usable client data found. Make sure the client was scraped first.")
         sys.exit(1)
