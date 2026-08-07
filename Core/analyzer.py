@@ -59,12 +59,15 @@ class MarketAnalyzer:
         prices = prices.where(prices >= 1000, np.nan)
         return prices
 
-    def _classify_products(self, descriptions) -> list:
+    def _classify_products(self, descriptions, domain_hint: str | None = None) -> list:
         """Batch-categorize every post description. Delegates to
         ProductClassifier (offline scoring + optional LLM). Batching lets the
         LLM pass resolve many posts in a couple of calls instead of one per
-        row, and shares a cache across duplicate descriptions."""
-        return self.classifier.classify_many(list(descriptions))
+        row, and shares a cache across duplicate descriptions.
+
+        `domain_hint`: optional canonical domain (Shoes/Clothing/...) forwarded
+        from the operator to nudge ambiguous results toward the shop's type."""
+        return self.classifier.classify_many(list(descriptions), domain_hint=domain_hint)
 
     @staticmethod
     def _extract_hashtags(text: str):
@@ -79,12 +82,20 @@ class MarketAnalyzer:
 
     # ----------------------------------------------------- main entry point
     def analyze_profile(self, target_username: str, top_n: int = 5,
-                        run_nlp: bool = True, nlp_post_limit: int = 6) -> dict:
+                        run_nlp: bool = True, nlp_post_limit: int = 6,
+                        hint: str | None = None) -> dict:
         """
         Master method. Returns a fully populated insights dictionary for one
         profile. This is what both the report generator and the competitor
         comparison consume.
+
+        `hint`: optional operator domain hint (shoes/clothing/...). Nudges
+        ambiguous classification and forces the drill-down domain. Client-only —
+        competitors keep hint=None so they classify on their own merits.
         """
+        from core.classifier import resolve_domain_hint
+
+        domain_hint = resolve_domain_hint(hint) if hint else None
         df, file_path = self._load_dataframe(target_username)
         print(f"[*] Analyzing latest data from: {os.path.basename(file_path)}")
 
@@ -116,7 +127,7 @@ class MarketAnalyzer:
         df["description"] = df["description"].fillna("")
         df["comments"] = df["comments"].fillna("")
 
-        df["category"] = self._classify_products(df["description"])
+        df["category"] = self._classify_products(df["description"], domain_hint=domain_hint)
         df["comment_count"] = df["comments"].apply(
             lambda c: 0 if not str(c).strip() else len([l for l in str(c).split("\n") if l.strip()])
         )
@@ -136,7 +147,7 @@ class MarketAnalyzer:
         insights["pricing"] = self._pricing_stats(df)
 
         # --- Category / product-mix intelligence ------------------------------
-        insights["categories"] = self._category_stats(df)
+        insights["categories"] = self._category_stats(df, domain_hint=domain_hint)
 
         # --- Hashtag intelligence ---------------------------------------------
         insights["hashtags"] = self._hashtag_stats(df, top=12)
@@ -260,11 +271,18 @@ class MarketAnalyzer:
                 best_eng, best_band = avg_eng, labels[i]
         return {"bands": bands, "best_band": best_band}
 
-    def _category_stats(self, df: pd.DataFrame) -> dict:
-        rows = []
+    def _category_stats(self, df: pd.DataFrame, domain_hint: str | None = None) -> dict:
+        """Build category breakdown with adaptive drill-down. When one domain
+        dominates (≥70% or effective-N ≤1.5), re-aggregate by the best axis
+        (brand/subtype/gender/material/price) that passes coverage + bucket gates.
+        Preserves primary view for cross-profile comparisons."""
+        from core.classifier import domain_of, detect_brand, detect_gender, detect_material
+
+        # Primary breakdown by product category (never overwrite df["category"])
+        primary_rows = []
         for cat, sub in df.groupby("category"):
             priced = sub["price_clean"].dropna()
-            rows.append({
+            primary_rows.append({
                 "category": cat,
                 "posts": int(len(sub)),
                 "share_pct": round(100 * len(sub) / len(df), 1),
@@ -272,15 +290,175 @@ class MarketAnalyzer:
                 "total_engagement": int(sub["engagement"].sum()),
                 "avg_price": float(priced.mean()) if not priced.empty else None,
             })
-        rows.sort(key=lambda r: r["total_engagement"], reverse=True)
+        primary_rows.sort(key=lambda r: r["total_engagement"], reverse=True)
 
-        # Identify the best & worst performing category by average engagement
-        by_avg = sorted(rows, key=lambda r: r["avg_engagement"], reverse=True)
+        by_avg = sorted(primary_rows, key=lambda r: r["avg_engagement"], reverse=True)
+        primary_star = by_avg[0]["category"] if by_avg else None
+        primary_under = by_avg[-1]["category"] if len(by_avg) > 1 else None
+
+        # Map fine categories to domains, compute concentration
+        df_copy = df.copy()
+        df_copy["_domain"] = df_copy["category"].apply(domain_of)
+        non_other = df_copy[df_copy["_domain"] != "Other"]
+
+        if len(non_other) == 0:
+            # All Other → no drill
+            return {
+                "breakdown": primary_rows,
+                "primary_breakdown": primary_rows,
+                "star_category": primary_star,
+                "primary_star_category": primary_star,
+                "underperformer": primary_under,
+                "drilled": False,
+                "axis": "category",
+                "axis_label_fa": "دسته",
+                "domain": None,
+            }
+
+        domain_counts = non_other["_domain"].value_counts()
+        top_domain = domain_counts.index[0]
+        domain_share = domain_counts.iloc[0] / len(non_other)
+
+        # Effective number of categories (inverse Simpson)
+        cat_shares = df["category"].value_counts(normalize=True)
+        inv_simpson = 1.0 / (cat_shares ** 2).sum() if len(cat_shares) > 0 else 0
+
+        # Trigger drill-down when domain concentration is high OR categories collapse
+        trigger = (domain_share >= 0.70) or (inv_simpson <= 1.5)
+
+        if not trigger:
+            return {
+                "breakdown": primary_rows,
+                "primary_breakdown": primary_rows,
+                "star_category": primary_star,
+                "primary_star_category": primary_star,
+                "underperformer": primary_under,
+                "drilled": False,
+                "axis": "category",
+                "axis_label_fa": "دسته",
+                "domain": None,
+            }
+
+        # Drill-down: pick best axis on the dominant domain subset
+        target_domain = domain_hint if domain_hint else top_domain
+        domain_df = non_other[non_other["_domain"] == target_domain].copy()
+
+        if len(domain_df) < 3:
+            # Too few posts to meaningfully drill
+            return {
+                "breakdown": primary_rows,
+                "primary_breakdown": primary_rows,
+                "star_category": primary_star,
+                "primary_star_category": primary_star,
+                "underperformer": primary_under,
+                "drilled": False,
+                "axis": "category",
+                "axis_label_fa": "دسته",
+                "domain": target_domain,
+            }
+
+        # Detect axis values for each post
+        domain_df["_brand"] = domain_df["description"].apply(detect_brand)
+        domain_df["_gender"] = domain_df["description"].apply(detect_gender)
+        domain_df["_material"] = domain_df["description"].apply(detect_material)
+        domain_df["_subtype"] = domain_df["category"]  # fine label as subtype
+        domain_df["_price_band"] = domain_df["price_clean"].apply(
+            lambda p: self._assign_price_band(p, domain_df["price_clean"].dropna()) if pd.notna(p) else None
+        )
+
+        # Score each axis: coverage, meaningful buckets, balance (effective-N).
+        # price_band is a *fallback*, not a peer: quartile bands are balanced by
+        # construction, so they'd win a pure effective-N race against the semantic
+        # axes (brand/subtype/gender/material) the operator actually cares about
+        # — e.g. an all-Nike/Vans shop would drill by price instead of brand. So
+        # we only fall back to price bands when no semantic axis qualifies.
+        AXES = [
+            ("_brand", "برند", False),
+            ("_subtype", "نوع", False),
+            ("_gender", "جنسیت", False),
+            ("_material", "جنس", False),
+            ("_price_band", "رنج قیمت", True),   # fallback only
+        ]
+        priority = {col: i for i, (col, _, _) in enumerate(AXES)}
+        semantic, fallback = [], []
+        for col, fa_label, is_fallback in AXES:
+            counts = domain_df[col].value_counts()
+            coverage = domain_df[col].notna().sum() / len(domain_df)
+            meaningful = sum(1 for c in counts if c >= max(2, len(domain_df) * 0.05))
+
+            if coverage < 0.50 or meaningful < 2:
+                continue
+
+            shares = counts / counts.sum()
+            eff_n = 1.0 / (shares ** 2).sum() if len(shares) > 0 else 0
+            (fallback if is_fallback else semantic).append((col, fa_label, eff_n, coverage))
+
+        axes = semantic or fallback
+
+        if not axes:
+            # No valid axis → keep primary
+            return {
+                "breakdown": primary_rows,
+                "primary_breakdown": primary_rows,
+                "star_category": primary_star,
+                "primary_star_category": primary_star,
+                "underperformer": primary_under,
+                "drilled": False,
+                "axis": "category",
+                "axis_label_fa": "دسته",
+                "domain": target_domain,
+            }
+
+        # Pick best: max effective-N, tie-break coverage, then priority
+        # Pick best: max effective-N, tie-break coverage, then axis priority.
+        axes.sort(key=lambda x: (-x[2], -x[3], priority[x[0]]))
+        best_col, best_fa, _, _ = axes[0]
+
+        # Re-aggregate by the winning axis
+        drill_rows = []
+        for val, sub in domain_df.groupby(best_col):
+            if pd.isna(val):
+                continue
+            priced = sub["price_clean"].dropna()
+            drill_rows.append({
+                "category": str(val),
+                "posts": int(len(sub)),
+                "share_pct": round(100 * len(sub) / len(domain_df), 1),
+                "avg_engagement": float(sub["engagement"].mean()),
+                "total_engagement": int(sub["engagement"].sum()),
+                "avg_price": float(priced.mean()) if not priced.empty else None,
+            })
+        drill_rows.sort(key=lambda r: r["total_engagement"], reverse=True)
+
+        drill_avg = sorted(drill_rows, key=lambda r: r["avg_engagement"], reverse=True)
+        drill_star = drill_avg[0]["category"] if drill_avg else None
+        drill_under = drill_avg[-1]["category"] if len(drill_avg) > 1 else None
+
         return {
-            "breakdown": rows,
-            "star_category": by_avg[0]["category"] if by_avg else None,
-            "underperformer": by_avg[-1]["category"] if len(by_avg) > 1 else None,
+            "breakdown": drill_rows,
+            "primary_breakdown": primary_rows,
+            "star_category": drill_star,
+            "primary_star_category": primary_star,
+            "underperformer": drill_under,
+            "drilled": True,
+            "axis": best_col.lstrip("_"),
+            "axis_label_fa": best_fa,
+            "domain": target_domain,
         }
+
+    def _assign_price_band(self, price: float, all_prices: pd.Series) -> str | None:
+        """Assign a Persian price band label based on quartiles."""
+        if len(all_prices) < 4:
+            return None
+        q = all_prices.quantile([0.25, 0.5, 0.75])
+        if price <= q[0.25]:
+            return "ارزان"
+        elif price <= q[0.5]:
+            return "متوسط"
+        elif price <= q[0.75]:
+            return "بالا"
+        else:
+            return "پریمیوم"
 
     def _hashtag_stats(self, df: pd.DataFrame, top: int = 12) -> dict:
         tag_counter = Counter()
@@ -494,7 +672,10 @@ class CompetitorComparator:
                 "median_engagement": round(p["engagement"]["median"], 1) if p.get("engagement") else 0,
                 "total_engagement": p["engagement"]["total"] if p.get("engagement") else 0,
                 "avg_price": round(p["pricing"]["mean"]) if p.get("pricing", {}).get("available") else None,
-                "star_category": p.get("categories", {}).get("star_category"),
+                # Use the product-type view (not any brand/gender drill-down) so
+                # client-vs-competitor comparison stays apples-to-apples.
+                "star_category": (p.get("categories", {}).get("primary_star_category")
+                                  or p.get("categories", {}).get("star_category")),
                 "trend": p.get("momentum", {}).get("trend", "n/a"),
             }
         return {"client": row(client), "competitors": [row(c) for c in comp]}
@@ -553,10 +734,14 @@ class CompetitorComparator:
             )
 
         # 2. Category opportunity: a category competitors win that the client under-serves
-        client_cats = {c["category"]: c for c in client.get("categories", {}).get("breakdown", [])}
+        # Use the product-type view (not any brand/gender drill-down) so client-vs-
+        # competitor comparison stays apples-to-apples.
+        client_cats = {c["category"]: c for c in client.get("categories", {}).get("primary_breakdown")
+                       or client.get("categories", {}).get("breakdown", [])}
         comp_star_cats = Counter()
         for c in comp:
-            star = c.get("categories", {}).get("star_category")
+            star = (c.get("categories", {}).get("primary_star_category")
+                    or c.get("categories", {}).get("star_category"))
             if star:
                 comp_star_cats[star] += 1
         for cat, votes in comp_star_cats.most_common():

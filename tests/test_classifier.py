@@ -16,7 +16,16 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.classifier import classify_offline  # noqa: E402
+from core.classifier import (  # noqa: E402
+    classify_offline,
+    detect_brand,
+    detect_gender,
+    detect_material,
+    domain_of,
+    TAXONOMY,
+    BRAND_MAP,
+    DOMAIN_MAP,
+)
 
 
 def _domain(label):
@@ -55,6 +64,16 @@ CASES = [
     ("کمربند چرم طبیعی مردانه", "Belt"),
     # --- pure promo => Other ---
     ("کد تخفیف اسنپ‌پی فقط تا امشب! مبلغ تخفیف ۵۰۰ هزار تومان", "Other"),
+    # --- phantom-Skincare bug: color «کرم» (cream) must NOT be Skincare ---
+    ("مانتو مجلسی رنگ کرم شیک", "Manteau"),          # headline bug
+    ("کفش کتونی رنگ کرم", "Sneakers"),               # cream color on a sneaker
+    ("شومیز رنگ کرم آستین بلند", "Shirt"),           # cream color on a shirt
+    # --- but real skincare compounds still classify after generic removal ---
+    ("کرم آبرسان صورت پوست خشک", "Skincare"),
+    ("کرم دور چشم ضد چروک", "Skincare"),
+    # --- «بافت» homonym: texture/weave must NOT be Sweater ---
+    ("کیف دستی زنانه با بافت چرم", "Handbag"),
+    ("پلیور بافت مردانه یقه اسکی", "Sweater"),       # real sweater still wins
 ]
 
 
@@ -77,5 +96,57 @@ def test_all_cases_pass():
     assert run() == 0
 
 
+# --- detector units (drill-down axis signals) -------------------------------
+def test_detect_brand():
+    assert detect_brand("Air Max 90 مشکی") == "Nike"
+    assert detect_brand("ونس نو اسکول طوسی") == "Vans"
+    assert detect_brand("گردنبند نقره با آبکاری طلا") is None
+
+
+def test_detect_gender():
+    assert detect_gender("مانتو زنانه اداری") == "زنانه"
+    assert detect_gender("کفش مردانه چرم") == "مردانه"
+    assert detect_gender("تیشرت نخی یقه گرد") is None
+
+
+def test_detect_material():
+    assert detect_material("کیف دستی چرم طبیعی") == "چرم"
+    assert detect_material("ساعت مچی استیل ضدآب") == "استیل"
+    assert detect_material("گردنبند نقره") == "نقره"
+
+
+# --- drift guard: every classifiable label maps to a domain ------------------
+def test_domain_map_covers_all_labels():
+    """Every TAXONOMY label and every brand-only label must have a DOMAIN_MAP
+    entry, otherwise the drill-down concentration test silently mislabels it."""
+    missing = []
+    for label in TAXONOMY:
+        if domain_of(label) is None or label not in DOMAIN_MAP:
+            missing.append(label)
+    for brand_label in BRAND_MAP:
+        if domain_of(brand_label) is None or brand_label not in DOMAIN_MAP:
+            missing.append(brand_label)
+    assert not missing, f"labels missing from DOMAIN_MAP: {missing}"
+
+
+def _run_extra():
+    """Run the non-CASES assertions so the __main__ path exercises them too."""
+    extra = [
+        test_detect_brand, test_detect_gender, test_detect_material,
+        test_domain_map_covers_all_labels,
+    ]
+    failed = 0
+    for fn in extra:
+        try:
+            fn()
+            print(f"[PASS] {fn.__name__}")
+        except AssertionError as e:
+            failed += 1
+            print(f"[FAIL] {fn.__name__}: {e}")
+    return failed
+
+
 if __name__ == "__main__":
-    sys.exit(1 if run() else 0)
+    rc = run()
+    rc += _run_extra()
+    sys.exit(1 if rc else 0)

@@ -1,4 +1,5 @@
 import os
+import re
 import html
 from datetime import datetime
 from pathlib import Path
@@ -50,6 +51,38 @@ def _e(text):
     return html.escape(str(text))
 
 
+# Western -> Persian digit mapping for section numbering.
+_FA_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+
+def _fa_num(n):
+    return str(n).translate(_FA_DIGITS)
+
+
+# Matches the leading "<number>." at the start of an <h2> heading, where the
+# number may be written in Western or Persian digits (e.g. "۴. تحلیل ...").
+_H2_NUM_RE = re.compile(r"(<h2>)\s*[0-9۰-۹]+\s*\.\s*")
+
+
+def _renumber_sections(body):
+    """Rewrite the leading number of each <h2> so sections read 1, 2, 3, …
+    in the order they actually appear.
+
+    The individual section builders hardcode the numbering of the *full*
+    report; the mini report reuses a subset of them in a different order, which
+    otherwise makes the numbers jump (e.g. 2 -> 4 -> … -> 11). Renumbering the
+    assembled body keeps both reports sequential and survives conditionally
+    omitted sections."""
+    counter = 0
+
+    def repl(m):
+        nonlocal counter
+        counter += 1
+        return f"{m.group(1)}{_fa_num(counter)}. "
+
+    return _H2_NUM_RE.sub(repl, body)
+
+
 # Persian labels for momentum trend
 TREND_FA = {
     "growing": "📈 در حال رشد",
@@ -91,21 +124,21 @@ class ReportGenerator:
         body = self._build_body(client_insights, comparison, competitor_insights, brand)
         styled_html = self._wrap_html(body, username, brand)
 
-        html_path = os.path.join(self.output_dir, f"{username}_market_report.html")
+        # Timestamp each report so successive runs for the same profile are kept
+        # side by side instead of overwriting the previous one — mirrors how the
+        # scrapers timestamp their data files. The packager picks the freshest
+        # one by mtime.
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        html_path = os.path.join(self.output_dir, f"{username}_market_report_{ts}.html")
         with open(html_path, "w", encoding="utf-8-sig") as f:
             f.write(styled_html)
         print(f"[+] HTML report generated at: {html_path}")
 
         pdf_path = None
         if make_pdf:
-            pdf_path = os.path.join(self.output_dir, f"{username}_market_report.pdf")
-            # Remove any stale PDF first so the packager never ships an old one.
-            if os.path.exists(pdf_path):
-                try:
-                    os.remove(pdf_path)
-                except OSError:
-                    pass
+            pdf_path = os.path.join(self.output_dir, f"{username}_market_report_{ts}.pdf")
             try:
+
                 HTML(string=styled_html).write_pdf(pdf_path)
 
                 print(f"[+] PDF report generated at: {pdf_path}")
@@ -139,21 +172,21 @@ class ReportGenerator:
                                      brand, contact)
         styled_html = self._wrap_html(body, username, brand)
 
-        html_path = os.path.join(self.output_dir, f"{username}_mini_report.html")
+        # Timestamp each mini report so successive runs are kept side by side
+        # instead of overwriting the previous one (same behaviour as the full
+        # report and the scraped data files).
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        html_path = os.path.join(self.output_dir, f"{username}_mini_report_{ts}.html")
         with open(html_path, "w", encoding="utf-8-sig") as f:
             f.write(styled_html)
         print(f"[+] HTML mini report generated at: {html_path}")
 
         pdf_path = None
         if make_pdf:
-            pdf_path = os.path.join(self.output_dir, f"{username}_mini_report.pdf")
-            if os.path.exists(pdf_path):
-                try:
-                    os.remove(pdf_path)
-                except OSError:
-                    pass
+            pdf_path = os.path.join(self.output_dir, f"{username}_mini_report_{ts}.pdf")
             try:
                 HTML(string=styled_html).write_pdf(pdf_path)
+
 
                 print(f"[+] PDF mini report generated at: {pdf_path}")
             except Exception as e:
@@ -181,7 +214,7 @@ class ReportGenerator:
             sections.append(self._advice_section(comparison))
         sections.append(self._top_posts_section(client))
         sections.append(self._footer(brand))
-        return "\n".join(s for s in sections if s)
+        return _renumber_sections("\n".join(s for s in sections if s))
 
     # -------------------------------------------------------- mini body builder
     def _build_mini_body(self, client, comparison, competitors, brand, contact=None):
@@ -189,15 +222,16 @@ class ReportGenerator:
             self._cover(client, brand),
             self._executive_summary(client, comparison),
             self._kpi_cards(client),
-            self._category_section(client),
+            self._mini_category_section(client),
             self._pricing_section(client),
             self._mini_competitor_section(client, comparison, competitors),
+
             self._mini_gap_section(client, comparison, competitors),
             self._top_posts_section(client),
             self._mini_cta_section(client, comparison, competitors, brand, contact),
             self._footer(brand),
         ]
-        return "\n".join(s for s in sections if s)
+        return _renumber_sections("\n".join(s for s in sections if s))
 
     # -------------------------------------------------------------- cover page
     def _cover(self, client, brand):
@@ -315,14 +349,22 @@ class ReportGenerator:
         if not breakdown:
             return ""
 
+        # When the mix collapsed to one product type we drill down along a finer
+        # axis (brand / gender / material / price). Titles + table header follow.
+        axis_fa = cats.get("axis_label_fa", "دسته")
+        drilled = cats.get("drilled", False)
+        h2_title = "تحلیل سبد محصولات"
+        if drilled:
+            h2_title = f"تحلیل سبد محصولات — بر اساس {axis_fa}"
+
         share_data = [(_cat_en(c["category"]), c["posts"]) for c in breakdown]
         eng_data = sorted(
             [(_cat_en(c["category"]), c["avg_engagement"]) for c in breakdown],
             key=lambda x: x[1], reverse=True
         )
 
-        donut = charts.donut_chart(share_data, title="Post Share by Category")
-        bars = charts.bar_chart(eng_data, title="Avg Engagement by Category")
+        donut = charts.donut_chart(share_data, title=f"Post Share by {axis_fa}")
+        bars = charts.bar_chart(eng_data, title=f"Avg Engagement by {axis_fa}")
 
 
         rows = ""
@@ -336,26 +378,51 @@ class ReportGenerator:
         under = cats.get("underperformer")
         insight = ""
         if star and under and star != under:
-            insight = (f"<div class='insight'>💡 دسته <b>{_e(star)}</b> بیشترین تعامل را جذب می‌کند و "
-                       f"دسته <b>{_e(under)}</b> کمترین. پیشنهاد می‌شود محتوای بیشتری در دسته پرطرفدار تولید شود.</div>")
+            insight = (f"<div class='insight'>💡 {axis_fa} <b>{_e(star)}</b> بیشترین تعامل را جذب می‌کند و "
+                       f"<b>{_e(under)}</b> کمترین. پیشنهاد می‌شود محتوای بیشتری در بخش پرطرفدار تولید شود.</div>")
 
         return f"""
         <section class="section">
-            <h2>۴. تحلیل سبد محصولات</h2>
+            <h2>۴. {h2_title}</h2>
             <div class="two-col">
                 <div class="chart-box">{donut}</div>
                 <div class="chart-box">{bars}</div>
             </div>
             <table class="data-table">
-                <thead><tr><th>دسته</th><th>تعداد پست</th><th>سهم</th><th>میانگین تعامل</th><th>میانگین قیمت</th></tr></thead>
+                <thead><tr><th>{axis_fa}</th><th>تعداد پست</th><th>سهم</th><th>میانگین تعامل</th><th>میانگین قیمت</th></tr></thead>
                 <tbody>{rows}</tbody>
             </table>
             {insight}
         </section>
         """
 
+    # ---------------------------------------------------- mini category (compact)
+    def _mini_category_section(self, client):
+        """Compact category note for the mini report.
+
+        The full product-basket breakdown (charts + table) is a paid feature and
+        lives only in the normal/pro reports. Here we surface just the single
+        most- and least-engaging category as a teaser one-liner."""
+        cats = client.get("categories", {})
+        star = cats.get("star_category")
+        under = cats.get("underperformer")
+        if not star:
+            return ""
+
+        pieces = [f"دسته‌ای با بیشترین تعامل: <b>{_e(star)}</b>"]
+        if under and under != star:
+            pieces.append(f"دسته‌ای با کمترین تعامل: <b>{_e(under)}</b>")
+
+        return f"""
+        <section class="section">
+            <h2>۴. دسته‌بندی محصولات</h2>
+            <div class="callout"><ul class="summary-list">{"".join(f"<li>{p}</li>" for p in pieces)}</ul></div>
+        </section>
+        """
+
     # ----------------------------------------------------------- pricing chart
     def _pricing_section(self, client):
+
         pricing = client.get("pricing", {})
         if not pricing.get("available"):
             return """

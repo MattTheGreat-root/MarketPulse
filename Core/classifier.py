@@ -62,12 +62,21 @@ TAXONOMY = {
                                         "t-shirt", "tshirt", "tee", "polo"], "generic": []},
     "Hoodie/Sweatshirt (هودی)": {"kw": ["هودی", "سویشرت", "سوییشرت", "hoodie",
                                          "sweatshirt", "کراپ"], "generic": []},
-    "Sweater (بافت)":          {"kw": ["بافت", "پلیور", "ژاکت", "sweater", "پولیور"],
-                                "generic": []},
+    # "بافت" is demoted to generic (weight 1): it means both "knit sweater" and
+    # "texture/weave", so "کیف با بافت چرم" (leather-textured bag) must not beat
+    # the actual product. پلیور/ژاکت/پولیور stay strong so real sweaters win.
+    "Sweater (بافت)":          {"kw": ["پلیور", "ژاکت", "sweater", "پولیور"],
+                                "generic": ["بافت"]},
     "Shirt (پیراهن)":          {"kw": ["پیراهن مردانه", "شومیز", "پیراهن یقه", "shirt",
                                         "پیراهن آستین"], "generic": ["پیراهن"]},
     "Dress (لباس مجلسی)":      {"kw": ["لباس مجلسی", "ماکسی", "لباس شب", "لباس زنانه",
                                         "dress", "پیراهن زنانه", "تونیک"], "generic": []},
+    # Manteau - one of the most common Iranian women's-clothing items; its
+    # absence let stray color words ("رنگ کرم") win. "مانتو مجلسی" resolves here
+    # (not Dress, which needs the phrase "لباس مجلسی", not bare "مجلسی").
+    "Manteau (مانتو)":         {"kw": ["مانتو", "مانتوی", "مانتو شومیز", "مانتو مجلسی",
+                                        "مانتو اداری", "مانتومزون", "manteau"],
+                                "generic": []},
     "Pants (شلوار)":           {"kw": ["شلوار", "جین", "جینز", "شلوار پارچه", "دمپا",
                                         "pants", "jean", "trouser", "کارگو"], "generic": []},
     "Shorts (شلوارک)":         {"kw": ["شلوارک", "شورت", "short"], "generic": []},
@@ -127,10 +136,16 @@ TAXONOMY = {
                                         "سایه چشم", "هایلایتر", "کانسیلر", "خط چشم",
                                         "رژگونه", "پنکک", "lipstick", "mascara",
                                         "makeup", "میکاپ", "آرایش"], "generic": []},
+    # NOTE: bare "کرم" is intentionally NOT a keyword here - it is also the
+    # color "cream/beige", ubiquitous in clothing/shoe posts ("مانتو رنگ کرم"),
+    # and as a generic it made every cream-colored garment register as Skincare.
+    # Real skincare is caught by the specific compounds below (کرم شب/روز/
+    # آبرسان/دور چشم/ضدآفتاب). Same rule applies to any color word: never add
+    # bare "سرمه"(navy)/"صورتی"(pink)/"طلایی" etc. as keywords.
     "Skincare (مراقبت پوست)":  {"kw": ["ضدآفتاب", "سرم", "مرطوب‌کننده", "کرم آبرسان",
                                         "ماسک صورت", "پاک‌کننده", "کرم دور چشم", "تونر",
                                         "skincare", "serum", "کرم شب", "کرم روز"],
-                                "generic": ["کرم", "لوسیون"]},
+                                "generic": ["لوسیون"]},
     "Haircare (مراقبت مو)":    {"kw": ["شامپو", "ماسک مو", "سرم مو", "نرم‌کننده مو",
                                         "shampoo", "روغن مو"], "generic": []},
 
@@ -185,8 +200,140 @@ BRAND_MAP = {
 W_BRAND = 5
 W_KW = 2
 W_GENERIC = 1
+W_HINT = 0.5          # tiny tie-break nudge toward an operator-supplied domain
 
 FALLBACK = "Other"
+
+# ---------------------------------------------------------------------------
+# Coarse domain map: fine bilingual label -> shop domain. Used by the adaptive
+# drill-down (analyzer) to decide when a shop is essentially ONE domain, and by
+# the operator hint to bias/force a domain. Built by inverting a domain->labels
+# grouping so it stays a single source of truth; a test asserts every TAXONOMY /
+# brand-only label has an entry (guards against drift when the taxonomy grows).
+# ---------------------------------------------------------------------------
+_DOMAIN_GROUPS = {
+    "Shoes": ["Sneakers (کتونی)", "Boots (بوت)", "Heels (کفش پاشنه‌دار)",
+              "Sandals (صندل)", "Loafers (کالج)", "Formal Shoes (کفش کلاسیک)",
+              "Shoes (کفش)"],
+    "Clothing": ["T-Shirt/Polo (تیشرت)", "Hoodie/Sweatshirt (هودی)",
+                 "Sweater (بافت)", "Shirt (پیراهن)", "Dress (لباس مجلسی)",
+                 "Manteau (مانتو)", "Pants (شلوار)", "Shorts (شلوارک)",
+                 "Skirt (دامن)", "Jacket/Coat (کاپشن/پالتو)", "Suit (کت و شلوار)",
+                 "Activewear (ورزشی)"],
+    "Bags": ["Backpack (کوله)", "Handbag (کیف دستی)", "Wallet (کیف پول)",
+             "Bag (کیف)"],
+    "Accessories": ["Hat (کلاه)", "Belt (کمربند)", "Scarf/Shawl (شال/روسری)",
+                    "Sunglasses (عینک)", "Socks (جوراب)", "Gloves (دستکش)",
+                    "Tie (کراوات)"],
+    "Jewelry": ["Bangle (النگو)", "Ring (انگشتر)", "Necklace (گردنبند)",
+                "Bracelet (دستبند)", "Earrings (گوشواره)", "Anklet (پابند)",
+                "Jewelry Set (سرویس)"],
+    "Watches": ["Watch (ساعت)"],
+    "Fragrance": ["Perfume (عطر/ادکلن)"],
+    "Beauty": ["Makeup (لوازم آرایش)", "Skincare (مراقبت پوست)",
+               "Haircare (مراقبت مو)"],
+    "Home": ["Home Decor (دکوراسیون)"],
+    "Health": ["Food & Health (سلامت/غذا)"],
+    "Electronics": ["Electronics (لوازم دیجیتال)"],
+}
+DOMAIN_MAP = {label: domain
+              for domain, labels in _DOMAIN_GROUPS.items()
+              for label in labels}
+
+# Free-text operator hint -> canonical domain. Accepts English + Persian.
+_HINT_SYNONYMS = {
+    "Shoes": ["shoe", "shoes", "sneaker", "sneakers", "کفش", "کتونی", "کتانی"],
+    "Clothing": ["clothing", "clothes", "apparel", "لباس", "پوشاک", "مانتو",
+                 "مزون"],
+    "Bags": ["bag", "bags", "کیف", "کوله"],
+    "Accessories": ["accessory", "accessories", "اکسسوری", "زیورآلات جانبی"],
+    "Jewelry": ["jewelry", "jewellery", "طلا", "جواهر", "زیورآلات", "بدلیجات"],
+    "Watches": ["watch", "watches", "ساعت"],
+    "Fragrance": ["perfume", "fragrance", "عطر", "ادکلن"],
+    "Beauty": ["beauty", "cosmetics", "makeup", "skincare", "آرایش",
+               "آرایشی", "بهداشتی", "مراقبت پوست"],
+    "Home": ["home", "decor", "دکور", "دکوراسیون"],
+    "Health": ["health", "supplement", "سلامت", "مکمل"],
+    "Electronics": ["electronics", "digital", "دیجیتال", "لوازم دیجیتال"],
+}
+
+
+def domain_of(label: str) -> str:
+    """Coarse domain for a fine category label ('Sneakers (کتونی)' -> 'Shoes')."""
+    return DOMAIN_MAP.get(label, "Other")
+
+
+def resolve_domain_hint(raw) -> str | None:
+    """Map a free-text operator hint to a canonical domain, or None if blank /
+    unrecognized (which keeps behavior fully automatic)."""
+    if not raw:
+        return None
+    norm = normalize(str(raw))
+    if not norm:
+        return None
+    for domain, words in _HINT_SYNONYMS.items():
+        for w in words:
+            wn = normalize(w)
+            if wn and (wn == norm or wn in norm.split() or _phrase_in(wn, norm)):
+                return domain
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Attribute detectors for the adaptive drill-down. Each returns a single label
+# (the value with the most keyword hits) or None. Pure/offline, same matching
+# engine as the taxonomy so Persian suffixes/phrases work identically.
+# ---------------------------------------------------------------------------
+BRAND_ALIASES = {
+    "Nike": ["nike", "نایک", "نایکی", "air max", "airmax", "ایرمکس", "ایر مکس",
+             "air force", "af1", "ایرفورس", "air jordan", "jordan", "aj1", "aj4",
+             "ایرجردن", "ایر جردن", "جردن", "dunk", "دانک", "sb dunk", "blazer",
+             "بلیزر", "cortez", "nocta"],
+    "Adidas": ["adidas", "آدیداس", "ادیداس", "yeezy", "ییزی", "ultraboost", "nmd",
+               "samba", "سامبا", "gazelle", "campus", "forum", "superstar"],
+    "New Balance": ["new balance", "نیوبالانس"],
+    "Puma": ["puma", "پوما"],
+    "Reebok": ["reebok", "ریبوک"],
+    "Vans": ["vans", "ونس"],
+    "Converse": ["converse", "کانورس", "all star", "آل استار"],
+    "Asics": ["asics", "asic"],
+    "Salomon": ["salomon", "سالومون"],
+    # watches
+    "Rolex": ["rolex", "رولکس"],
+    "Casio": ["casio", "کاسیو"],
+    "Seiko": ["seiko", "سیکو"],
+    "Omega": ["omega", "امگا"],
+    "Apple": ["apple watch", "اپل واچ"],
+    "Garmin": ["garmin", "گارمین"],
+    # perfume houses
+    "Dior": ["dior", "دیور", "sauvage", "ساواج"],
+    "Chanel": ["chanel", "شنل"],
+    "Creed": ["creed", "کرید", "aventus"],
+    "Tom Ford": ["tom ford", "تام فورد"],
+    # luxury bags
+    "Louis Vuitton": ["louis vuitton", "لویی ویتون"],
+    "Gucci": ["gucci", "گوچی"],
+    "Hermes": ["hermes", "هرمس"],
+    "Prada": ["prada", "پرادا"],
+}
+
+_GENDER_ALIASES = {
+    "مردانه": ["مردانه", "مردونه", "men", "mens", "آقایان"],
+    "زنانه": ["زنانه", "زنونه", "women", "womens", "بانوان", "لیدیز"],
+    "بچگانه": ["بچگانه", "بچه گانه", "kids", "kid", "پسرانه", "دخترانه", "نوزادی"],
+    "یونیسکس": ["یونیسکس", "unisex"],
+}
+
+_MATERIAL_ALIASES = {
+    "چرم": ["چرم", "چرمی", "leather"],
+    "جیر": ["جیر", "suede"],
+    "نخی": ["نخی", "پنبه", "cotton"],
+    "جین": ["جین", "جینز", "denim"],
+    "کتان": ["کتان", "linen"],
+    "استیل": ["استیل", "steel", "stainless"],
+    "طلا": ["طلا", "gold"],
+    "نقره": ["نقره", "silver"],
+}
 
 # Persian noun suffixes that may attach to a keyword token (plural / definite /
 # possessive). A token matches a keyword if stripping one of these suffixes
@@ -273,11 +420,67 @@ def _phrase_in(phrase: str, norm_text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Attribute detection (drill-down axes). Score each candidate value by number
+# of alias hits; return the strongest, or None.
+# ---------------------------------------------------------------------------
+def _detect(text: str, alias_map: dict):
+    norm = normalize(text)
+    if not norm:
+        return None
+    tokens = _tokens(norm)
+    best, best_hits = None, 0
+    for value, aliases in alias_map.items():
+        hits = sum(1 for a in aliases if _kw_hit(normalize(a), norm, tokens))
+        if hits > best_hits:
+            best, best_hits = value, hits
+    return best
+
+
+def detect_brand(text: str):
+    """Best-matching brand name in the text, or None. Covers footwear, watches,
+    fragrance houses and luxury bags (see BRAND_ALIASES)."""
+    return _detect(text, BRAND_ALIASES)
+
+
+def detect_gender(text: str):
+    """Persian gender label (مردانه/زنانه/بچگانه/یونیسکس) or None."""
+    return _detect(text, _GENDER_ALIASES)
+
+
+def detect_material(text: str):
+    """Persian material label (چرم/نخی/استیل/طلا…) or None."""
+    return _detect(text, _MATERIAL_ALIASES)
+
+
+# ---------------------------------------------------------------------------
+# Pre-normalized keyword tables. The taxonomy/brand strings are authored with
+# natural spelling (آ, ي, ك, ZWNJ), but post text is normalized before matching
+# (آ→ا, unify ي/ك, drop ZWNJ). Keywords must go through the SAME normalization
+# or multi-form words like «ضدآفتاب» silently never match. Compute once at load.
+# ---------------------------------------------------------------------------
+_NORM_TAXONOMY = {
+    label: {
+        "kw": [normalize(k) for k in cfg["kw"]],
+        "generic": [normalize(k) for k in cfg["generic"]],
+    }
+    for label, cfg in TAXONOMY.items()
+}
+_NORM_BRAND_MAP = {
+    label: [normalize(b) for b in brands] for label, brands in BRAND_MAP.items()
+}
+
+
+# ---------------------------------------------------------------------------
 # Offline scoring classifier
 # ---------------------------------------------------------------------------
-def classify_offline(text: str) -> str:
+def classify_offline(text: str, domain_hint: str | None = None) -> str:
     """Score every category over the text and return the best bilingual label,
-    or FALLBACK when nothing matches. Pure, deterministic, no network."""
+    or FALLBACK when nothing matches. Pure, deterministic, no network.
+
+    `domain_hint` (a canonical domain from resolve_domain_hint) applies only a
+    tiny tie-break nudge (W_HINT) to labels already matched in that domain — it
+    never invents a match where the text has none, so a mislabeled hint can't
+    force a wrong category onto an unrelated post."""
     norm = normalize(text)
     if not norm:
         return FALLBACK
@@ -286,14 +489,14 @@ def classify_offline(text: str) -> str:
 
     scores = {}
 
-    # Brand / model signals (strong).
-    for label, brands in BRAND_MAP.items():
+    # Brand / model signals (strong). Keywords are pre-normalized to match norm.
+    for label, brands in _NORM_BRAND_MAP.items():
         hits = sum(1 for b in brands if _kw_hit(b, norm, tokens))
         if hits:
             scores[label] = scores.get(label, 0) + W_BRAND + (hits - 1)
 
-    # Taxonomy keywords.
-    for label, cfg in TAXONOMY.items():
+    # Taxonomy keywords (pre-normalized).
+    for label, cfg in _NORM_TAXONOMY.items():
         s = 0
         for kw in cfg["kw"]:
             if _kw_hit(kw, norm, tokens):
@@ -306,6 +509,14 @@ def classify_offline(text: str) -> str:
 
     if not scores:
         return FALLBACK
+
+    # Optional operator hint: a tiny nudge (W_HINT) toward labels already matched
+    # in the hinted domain. Only touches labels that actually scored, so it can
+    # break a tie in the shop's favor but never invents a category from nothing.
+    if domain_hint:
+        for label in list(scores):
+            if domain_of(label) == domain_hint:
+                scores[label] += W_HINT
 
     # Highest score wins; ties break toward the earlier (more specific) entry.
     order = {label: i for i, label in enumerate(_all_labels())}
@@ -357,9 +568,14 @@ class ProductClassifier:
         self._cache = {}
 
     # -- batch entry point --------------------------------------------------
-    def classify_many(self, texts) -> list:
+    def classify_many(self, texts, domain_hint: str | None = None) -> list:
+        """Classify a batch of product descriptions.
+
+        `domain_hint`: optional canonical domain (Shoes/Clothing/...) to nudge
+        ambiguous results toward the shop's known type. Applied per-text via
+        classify_offline. Forwarded from analyzer when the operator gives one."""
         texts = ["" if t is None else str(t) for t in texts]
-        results = [classify_offline(t) for t in texts]
+        results = [classify_offline(t, domain_hint=domain_hint) for t in texts]
 
         if not self.use_llm:
             return results

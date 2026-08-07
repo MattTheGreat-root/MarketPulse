@@ -15,9 +15,9 @@ class ClientPackager:
         files = glob.glob(os.path.join(directory, pattern))
         if not files:
             return None
-        # Use modification time: the report generator overwrites the PDF in
-        # place on every run, so mtime is the reliable "freshest" signal
-        # (getctime is unreliable across platforms for overwritten files).
+        # Use modification time: reports are now timestamped per run, so there
+        # can be several for the same profile. mtime reliably identifies the
+        # freshest one to ship.
         return max(files, key=os.path.getmtime)
 
 
@@ -39,15 +39,17 @@ class ClientPackager:
         try:
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
                 # --- Report (PDF preferred, HTML fallback) --------------------
+                # Reports are timestamped ({username}_{label}_{ts}.pdf), so glob
+                # with a wildcard and let _get_latest_file pick the freshest.
                 pdf = self._get_latest_file(self.reports_dir,
-                                           f"{target_username}_{report_label}.pdf")
+                                           f"{target_username}_{report_label}_*.pdf")
                 if pdf:
                     zipf.write(pdf, arcname=os.path.basename(pdf))
                     print(f"  -> Added report (PDF): {os.path.basename(pdf)}")
                     added_any = True
                 elif include_html_fallback:
                     html = self._get_latest_file(self.reports_dir,
-                                                f"{target_username}_{report_label}.html")
+                                                f"{target_username}_{report_label}_*.html")
                     if html:
                         zipf.write(html, arcname=os.path.basename(html))
                         print(f"  -> Added report (HTML): {os.path.basename(html)}")
