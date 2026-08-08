@@ -16,6 +16,15 @@ except ImportError:
 from core.classifier import ProductClassifier
 
 
+# Promo/discount posts advertise a campaign (کد تخفیف، حراج، جشنواره) rather than
+# a product. The scraper's price regex then grabs the *discount amount* ("مبلغ
+# تخفیف: ۵۰۰ هزارتومان") as if it were a product price, dragging the mean/median
+# down. We treat a post as promo when it mentions a discount marker but has NO
+# real price anchor (قیمت/بها + number), so genuine product posts that merely
+# carry a "کد تخفیف" alongside "قیمت: ۷.۰۰۰.۰۰۰" are kept.
+DISCOUNT_MARKERS = ["تخفیف", "حراج", "جشنواره", "کد تخفیف", "آف"]
+PRICE_ANCHOR_RE = re.compile(r"(?:قیمت|بها)[^\d٠-٩۰-۹]{0,25}?[\d٠-٩۰-۹]")
+
 # Buyer-intent signals used for a fast, offline (non-AI) first pass over comments.
 PRICE_QUESTION_MARKERS = ["قیمت", "چند", "چنده", "چقدر", "قبمت", "قیمتش", "چقده"]
 ORDER_INTENT_MARKERS = ["سفارش", "خرید", "بخرم", "میخوام", "می‌خوام", "بفرست", "ارسال", "موجوده", "موجود", "زنگ", "تماس", "شماره"]
@@ -58,6 +67,32 @@ class MarketAnalyzer:
         )
         prices = prices.where(prices >= 1000, np.nan)
         return prices
+
+    @staticmethod
+    def _promo_mask(descriptions: pd.Series) -> pd.Series:
+        """Boolean mask flagging discount/promo posts whose parsed 'price' is
+        actually a discount amount, not a product price. True when a discount
+        marker is present but no real price anchor (قیمت/بها + number) is — so
+        real product posts that merely include a 'کد تخفیف' are NOT flagged."""
+        norm = descriptions.fillna("").astype(str).str.replace("‌", " ", regex=False)
+        has_discount = norm.apply(lambda t: any(m in t for m in DISCOUNT_MARKERS))
+        has_price = norm.apply(lambda t: bool(PRICE_ANCHOR_RE.search(t)))
+        return has_discount & ~has_price
+
+    @staticmethod
+    def _drop_price_outliers(prices: pd.Series) -> pd.Series:
+        """Trim price outliers via the 1.5*IQR fence (same rule used for
+        engagement in _split_trends) so a stray mis-parsed or extreme price
+        doesn't skew mean/median. Needs a few points to be meaningful."""
+        prices = prices.dropna()
+        if len(prices) < 4:
+            return prices
+        q1, q3 = prices.quantile(0.25), prices.quantile(0.75)
+        iqr = q3 - q1
+        if iqr == 0:
+            return prices
+        lo, hi = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+        return prices[(prices >= lo) & (prices <= hi)]
 
     def _classify_products(self, descriptions, domain_hint: str | None = None) -> list:
         """Batch-categorize every post description. Delegates to
@@ -126,6 +161,11 @@ class MarketAnalyzer:
             df["comments"] = ""
         df["description"] = df["description"].fillna("")
         df["comments"] = df["comments"].fillna("")
+
+        # Discount/promo posts carry a discount amount, not a product price;
+        # drop that price so it can't poison the pricing statistics.
+        df["is_promo"] = self._promo_mask(df["description"])
+        df.loc[df["is_promo"], "price_clean"] = np.nan
 
         df["category"] = self._classify_products(df["description"], domain_hint=domain_hint)
         df["comment_count"] = df["comments"].apply(
@@ -223,13 +263,17 @@ class MarketAnalyzer:
         return first[:max_len]
 
     def _pricing_stats(self, df: pd.DataFrame) -> dict:
-        prices = df["price_clean"].dropna()
+        # price_clean already excludes promo/discount posts (set NaN upstream).
+        # Trim price outliers so a stray extreme value can't skew the stats.
+        prices = self._drop_price_outliers(df["price_clean"])
         if prices.empty:
             return {"available": False}
 
+        # Restrict every downstream price aggregate to the same in-range set.
+        priced = df[df["price_clean"].isin(prices)]
+
         # Engagement-weighted average price reveals the price point buyers
         # actually respond to (not just what the shop posts).
-        priced = df.dropna(subset=["price_clean"])
         weight = priced["engagement"].clip(lower=1)
         weighted_avg = float((priced["price_clean"] * weight).sum() / weight.sum())
 
@@ -240,6 +284,7 @@ class MarketAnalyzer:
             "available": True,
             "count_priced": int(prices.count()),
             "count_unpriced": int(df["price_clean"].isna().sum()),
+            "count_outliers_removed": int(df["price_clean"].notna().sum() - prices.count()),
             "min": int(prices.min()),
             "max": int(prices.max()),
             "mean": float(prices.mean()),

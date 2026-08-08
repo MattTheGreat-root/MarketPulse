@@ -51,6 +51,21 @@ def _e(text):
     return html.escape(str(text))
 
 
+# The report body is peppered with decorative emojis (📈 💡 ⚠️ 💰 …). They add
+# nothing to a client-facing PDF and render as tiny mismatched glyphs, so we
+# strip every emoji from the assembled HTML in one pass before wrapping. The
+# ranges cover pictographs, symbols, dingbats, arrows, variation selectors and
+# the ZWJ used to build compound emoji.
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U00002190-\U000021FF"
+    "\U00002B00-\U00002BFF\U0000FE00-\U0000FE0F\U00002B50\U0000200D]+"
+)
+
+
+def _strip_emoji(s):
+    return _EMOJI_RE.sub("", str(s))
+
+
 # Western -> Persian digit mapping for section numbering.
 _FA_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
 
@@ -448,6 +463,7 @@ class ReportGenerator:
                  f"<li>میانگین: {_fmt_price(pricing['mean'])}</li>"
                  f"<li>میانه: {_fmt_price(pricing['median'])}</li>"
                  f"<li>پست‌های بدون قیمت مشخص: {pricing.get('count_unpriced', 0)}</li>"
+                 f"<li>داده‌های پرت حذف‌شده: {pricing.get('count_outliers_removed', 0)}</li>"
                  f"</ul>")
 
         return f"""
@@ -902,6 +918,7 @@ class ReportGenerator:
 
     # ================================================================ styling
     def _wrap_html(self, body, username, brand):
+        body = _strip_emoji(body)
         return f"""<!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
@@ -1030,7 +1047,7 @@ class ReportGenerator:
     .cta-locked li {{
         padding: 6px 0 6px 0; font-size: 12.5px; border-bottom: 1px solid rgba(255,255,255,.15);
     }}
-    .cta-locked li::before {{ content: "🔒 "; }}
+    .cta-locked li::before {{ content: "— "; color: #b0b7c3; }}
     .cta-contact {{
         background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.3);
         border-radius: 8px; padding: 12px 14px; text-align: center; font-size: 14px;

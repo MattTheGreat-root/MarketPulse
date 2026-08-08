@@ -7,6 +7,36 @@ straight into the report HTML.
 """
 
 import html
+import re
+
+try:
+    import arabic_reshaper
+    from bidi.algorithm import get_display
+    _SHAPE_OK = True
+except ImportError:  # pragma: no cover - shaping just degrades to raw text
+    _SHAPE_OK = False
+
+# WeasyPrint renders inline SVG <text> without the Arabic/Persian shaping and
+# bidi reordering it applies to normal HTML (that path goes through Pango). So
+# Persian in a chart label would come out isolated + left-to-right ("character
+# by character"). We pre-shape any label/title before it enters an SVG <text>.
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U00002190-\U000021FF"
+    "\U00002B00-\U00002BFF\U0000FE00-\U0000FE0F\U00002B50\U0000200D]+"
+)
+
+
+def _strip_emoji(s):
+    return _EMOJI_RE.sub("", s).strip()
+
+
+def _t(text):
+    """Prepare a string for an SVG <text> node: drop emojis, shape Persian
+    (reshape + bidi so WeasyPrint doesn't render it unjoined LTR), then escape."""
+    s = _strip_emoji(str(text))
+    if _SHAPE_OK and s:
+        s = get_display(arabic_reshaper.reshape(s))
+    return html.escape(s)
 
 # A calm, professional palette for a "sellable" report.
 PALETTE = ["#2c6fbb", "#e08e0b", "#3aa76d", "#c0504d", "#8064a2",
@@ -60,7 +90,7 @@ def bar_chart(data, width=560, bar_height=26, gap=12, pad_left=150,
     if title:
         parts.append(
             f'<text x="{width/2}" y="20" text-anchor="middle" '
-            f'font-size="14" font-weight="bold" fill="#2c3e50">{html.escape(title)}</text>'
+            f'font-size="14" font-weight="bold" fill="#2c3e50">{_t(title)}</text>'
         )
 
     for i, (label, val) in enumerate(data):
@@ -71,7 +101,7 @@ def bar_chart(data, width=560, bar_height=26, gap=12, pad_left=150,
         # label
         parts.append(
             f'<text x="{pad_left - 8}" y="{y + bar_height*0.7}" text-anchor="end" '
-            f'font-size="12" fill="#333">{html.escape(label[:24])}</text>'
+            f'font-size="12" fill="#333">{_t(label[:24])}</text>'
         )
         # bar
         parts.append(
@@ -114,7 +144,7 @@ def grouped_bar_chart(categories, series, width=620, height=320,
         parts.append(
             f'<text x="{width/2}" y="22" text-anchor="middle" '
 
-            f'font-size="14" font-weight="bold" fill="#2c3e50">{html.escape(title)}</text>'
+            f'font-size="14" font-weight="bold" fill="#2c3e50">{_t(title)}</text>'
         )
 
     base_y = pad_top + plot_h
@@ -138,7 +168,7 @@ def grouped_bar_chart(categories, series, width=620, height=320,
         parts.append(
             f'<text x="{gx + group_w/2:.1f}" y="{base_y + 16}" text-anchor="middle" '
             f'font-size="10" fill="#333" transform="rotate(0 {gx + group_w/2:.1f} {base_y + 16})">'
-            f'{html.escape(str(cat)[:14])}</text>'
+            f'{_t(str(cat)[:14])}</text>'
         )
 
     # legend
@@ -147,7 +177,7 @@ def grouped_bar_chart(categories, series, width=620, height=320,
     for si, (name, _) in enumerate(series):
         fill = PALETTE[si % len(PALETTE)]
         parts.append(f'<rect x="{lx}" y="{ly-9}" width="11" height="11" rx="2" fill="{fill}"/>')
-        parts.append(f'<text x="{lx+16}" y="{ly}" font-size="11" fill="#333">{html.escape(name)}</text>')
+        parts.append(f'<text x="{lx+16}" y="{ly}" font-size="11" fill="#333">{_t(name)}</text>')
         lx += 20 + len(name) * 7 + 24
 
     parts.append("</svg>")
@@ -170,7 +200,7 @@ def donut_chart(data, width=300, height=240, title=None):
     if title:
         parts.append(f'<text x="{width/2}" y="16" text-anchor="middle" '
 
-                     f'font-size="13" font-weight="bold" fill="#2c3e50">{html.escape(title)}</text>')
+                     f'font-size="13" font-weight="bold" fill="#2c3e50">{_t(title)}</text>')
 
     angle = -math.pi / 2
     for i, (label, val) in enumerate(data):
@@ -198,7 +228,7 @@ def donut_chart(data, width=300, height=240, title=None):
         pct = val / total * 100
         parts.append(f'<rect x="{lx}" y="{ly-9}" width="11" height="11" rx="2" fill="{fill}"/>')
         parts.append(f'<text x="{lx+16}" y="{ly}" font-size="10" fill="#333">'
-                     f'{html.escape(label[:16])} ({pct:.0f}%)</text>')
+                     f'{_t(label[:16])} ({pct:.0f}%)</text>')
         ly += 20
 
     parts.append("</svg>")
@@ -225,7 +255,7 @@ def line_chart(points, width=560, height=240, pad=40, title=None, color="#2c6fbb
     if title:
         parts.append(f'<text x="{width/2}" y="20" text-anchor="middle" '
 
-                     f'font-size="14" font-weight="bold" fill="#2c3e50">{html.escape(title)}</text>')
+                     f'font-size="14" font-weight="bold" fill="#2c3e50">{_t(title)}</text>')
 
     base_y = height - pad
     parts.append(f'<line x1="{pad}" y1="{base_y}" x2="{width-pad}" y2="{base_y}" stroke="#ccc"/>')
