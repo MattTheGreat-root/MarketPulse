@@ -176,6 +176,50 @@ def test_comparator_primary_view():
         f"Competitor star should be bag, got {comp_star}"
 
 
+def test_top_posts_relabeled_to_drill_axis():
+    """When the mix drills by brand, top-post records carry the brand (not the
+    generic product type) so section 7 matches the product-basket section."""
+    rows = [
+        ("Air Max 90 سفید نایک", "1200000", 50),
+        ("Air Force 1 مشکی نایک", "1300000", 60),
+        ("Air Jordan طوسی نایک", "1500000", 70),
+        ("Vans Old Skool سیاه", "800000", 40),
+        ("Vans Sk8-Hi سفید", "850000", 45),
+        ("New Balance 550 خاکستری", "1100000", 55),
+    ]
+    analyzer = MarketAnalyzer()
+    df = _synthetic_df(rows)
+    df["category"] = analyzer._classify_products(df["description"])
+    cats = analyzer._category_stats(df)
+    assert cats["drilled"] and cats["axis"] == "brand"
+
+    records = analyzer._posts_to_records(df, cats, df)
+    labels = {r["category"] for r in records}
+    # Brands, not the generic "Sneakers (کتونی)" product type.
+    assert labels & {"Nike", "Vans", "New Balance"}, f"expected brands, got {labels}"
+    assert "Sneakers (کتونی)" not in labels, "should not show generic product type"
+
+
+def test_top_posts_fallback_when_not_drilled():
+    """A diverse (non-drilled) shop keeps the product-type label on top posts."""
+    rows = [
+        ("Air Max سفید", "1200000", 50),
+        ("نیم بوت چرم", "2000000", 80),
+        ("کیف دستی زنانه چرم", "1500000", 70),
+        ("گردنبند نقره", "800000", 60),
+    ]
+    analyzer = MarketAnalyzer()
+    df = _synthetic_df(rows)
+    df["category"] = analyzer._classify_products(df["description"])
+    cats = analyzer._category_stats(df)
+    assert not cats["drilled"]
+
+    records = analyzer._posts_to_records(df, cats, df)
+    # Falls back to each post's own product-type category.
+    cats_seen = {r["category"] for r in records}
+    assert any("کیف" in c or "گردنبند" in c or "بوت" in c or "کتونی" in c for c in cats_seen)
+
+
 def run():
     tests = [
         test_all_sneakers_drills_by_brand,
@@ -184,6 +228,8 @@ def run():
         test_clothing_no_brands_drills_other_axis,
         test_record_shape_invariant,
         test_comparator_primary_view,
+        test_top_posts_relabeled_to_drill_axis,
+        test_top_posts_fallback_when_not_drilled,
     ]
     failed = 0
     for fn in tests:

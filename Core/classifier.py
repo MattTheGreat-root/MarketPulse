@@ -163,6 +163,20 @@ TAXONOMY = {
     "Electronics (لوازم دیجیتال)": {"kw": ["هدفون", "ایرپاد", "هندزفری", "پاوربانک",
                                            "شارژر", "اسپیکر", "airpod", "headphone",
                                            "smartwatch band", "موبایل"], "generic": []},
+
+    # ---- Blades / EDC (knife shops) --------------------------------------
+    # A knife shop's posts also carry the store name («فروشگاه چاقوی …»), so bare
+    # «چاقو» tags every post as at least a Knife (never Other). Specific sub-types
+    # are listed FIRST so they win the score tie against that per-post baseline.
+    "Cleaver (ساطور)":          {"kw": ["ساطور", "ساتور", "cleaver"], "generic": []},
+    "Scissors (قیچی)":          {"kw": ["قیچی", "scissors", "shears"], "generic": []},
+    "Folding Knife (چاقو تاشو)": {"kw": ["چاقو تاشو", "تاشو", "ضامن دار", "ضامندار",
+                                         "چاقو جیبی", "فشاری", "folding knife"],
+                                  "generic": []},
+    "Hunting Knife (کارد شکاری)": {"kw": ["کارد شکاری", "چاقو شکاری", "چاقوی شکاری",
+                                          "hunting knife"], "generic": []},
+    "Knife (چاقو)":             {"kw": ["چاقو", "دشنه", "قمه", "knife", "dagger"],
+                                 "generic": ["تیغه", "کارد"]},
 }
 
 # ---------------------------------------------------------------------------
@@ -235,6 +249,8 @@ _DOMAIN_GROUPS = {
     "Home": ["Home Decor (دکوراسیون)"],
     "Health": ["Food & Health (سلامت/غذا)"],
     "Electronics": ["Electronics (لوازم دیجیتال)"],
+    "Blades": ["Cleaver (ساطور)", "Scissors (قیچی)", "Folding Knife (چاقو تاشو)",
+               "Hunting Knife (کارد شکاری)", "Knife (چاقو)"],
 }
 DOMAIN_MAP = {label: domain
               for domain, labels in _DOMAIN_GROUPS.items()
@@ -255,6 +271,8 @@ _HINT_SYNONYMS = {
     "Home": ["home", "decor", "دکور", "دکوراسیون"],
     "Health": ["health", "supplement", "سلامت", "مکمل"],
     "Electronics": ["electronics", "digital", "دیجیتال", "لوازم دیجیتال"],
+    "Blades": ["knife", "knives", "blade", "edc", "چاقو", "کارد", "ساطور",
+               "قیچی", "چاقوسازی"],
 }
 
 

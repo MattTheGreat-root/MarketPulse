@@ -22,6 +22,7 @@ from core.classifier import (  # noqa: E402
     detect_gender,
     detect_material,
     domain_of,
+    resolve_domain_hint,
     TAXONOMY,
     BRAND_MAP,
     DOMAIN_MAP,
@@ -74,6 +75,12 @@ CASES = [
     # --- «بافت» homonym: texture/weave must NOT be Sweater ---
     ("کیف دستی زنانه با بافت چرم", "Handbag"),
     ("پلیور بافت مردانه یقه اسکی", "Sweater"),       # real sweater still wins
+    # --- blades / knife shop: store-name «چاقو» baseline + specific sub-types ---
+    ("فروشگاه چاقوی زنجان\nچاقو بابا ضدزنگ", "Knife"),
+    ("چاقوی تاشو ضامن دار گربر تمام استیل", "Folding Knife"),
+    ("کارد شکاری استیل دسته چوبی", "Hunting Knife"),
+    ("مینی ساطور آشپزخانه تیغه فولادی", "Cleaver"),
+    ("قیچی پشم زنی زنجان", "Scissors"),
 ]
 
 
@@ -129,11 +136,21 @@ def test_domain_map_covers_all_labels():
     assert not missing, f"labels missing from DOMAIN_MAP: {missing}"
 
 
+def test_operator_hint_resolves():
+    """Free-text operator hints map to a canonical domain; the knife-shop hint
+    that previously no-op'd (falling every post to Other) now resolves to Blades."""
+    assert resolve_domain_hint("knife") == "Blades"
+    assert resolve_domain_hint("چاقو") == "Blades"
+    assert resolve_domain_hint("sneakers") == "Shoes"
+    assert resolve_domain_hint("") is None
+    assert resolve_domain_hint("قوری") is None      # unrecognized → stays automatic
+
+
 def _run_extra():
     """Run the non-CASES assertions so the __main__ path exercises them too."""
     extra = [
         test_detect_brand, test_detect_gender, test_detect_material,
-        test_domain_map_covers_all_labels,
+        test_domain_map_covers_all_labels, test_operator_hint_resolves,
     ]
     failed = 0
     for fn in extra:

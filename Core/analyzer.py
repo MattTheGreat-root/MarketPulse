@@ -178,16 +178,19 @@ class MarketAnalyzer:
         # --- Engagement statistics --------------------------------------------
         insights["engagement"] = self._engagement_stats(df)
 
+        # --- Category / product-mix intelligence ------------------------------
+        # Computed before top_posts so those records can be relabeled along the
+        # same drill-down axis (e.g. show the brand/subtype, not the generic
+        # product type, in the top-posts section).
+        insights["categories"] = self._category_stats(df, domain_hint=domain_hint)
+
         # --- Outliers & organic trends ----------------------------------------
         trending_df, outliers_df, standard_df = self._split_trends(df, top_n)
-        insights["top_posts"] = self._posts_to_records(trending_df)
-        insights["viral_outliers"] = self._posts_to_records(outliers_df)
+        insights["top_posts"] = self._posts_to_records(trending_df, insights["categories"], df)
+        insights["viral_outliers"] = self._posts_to_records(outliers_df, insights["categories"], df)
 
         # --- Pricing intelligence ---------------------------------------------
         insights["pricing"] = self._pricing_stats(df)
-
-        # --- Category / product-mix intelligence ------------------------------
-        insights["categories"] = self._category_stats(df, domain_hint=domain_hint)
 
         # --- Hashtag intelligence ---------------------------------------------
         insights["hashtags"] = self._hashtag_stats(df, top=12)
@@ -241,19 +244,50 @@ class MarketAnalyzer:
         trending = standard.sort_values("engagement", ascending=False).head(top_n)
         return trending, outliers, standard
 
-    def _posts_to_records(self, sub: pd.DataFrame):
+    def _posts_to_records(self, sub: pd.DataFrame, cats: dict | None = None,
+                          full_df: pd.DataFrame | None = None):
+        """Turn posts into report records. When the category view drilled down
+        (e.g. an all-sneakers shop split by brand), the per-post `category` is
+        relabeled along that same axis so the top-posts table shows the brand /
+        subtype the section reports on — not the generic product type. Posts with
+        no value on that axis keep their product-type label as a fallback."""
+        labeler = self._axis_labeler(cats, full_df)
         records = []
         for _, row in sub.iterrows():
             price = row.get("price_clean")
             records.append({
                 "post_index": int(row["post_index"]),
-                "category": row.get("category", "Other"),
+                "category": labeler(row),
                 "price": None if pd.isna(price) else int(price),
                 "engagement": int(row["engagement"]),
                 "comment_count": int(row.get("comment_count", 0)),
                 "snippet": self._first_line(row.get("description", "")),
             })
         return records
+
+    def _axis_labeler(self, cats: dict | None, full_df: pd.DataFrame | None):
+        """Return a row->label function for the active drill-down axis. Falls
+        back to the post's product-type label when the axis is category/subtype
+        or the row has no detectable value on the axis."""
+        fine = lambda row: row.get("category", "Other")
+        if not cats or not cats.get("drilled"):
+            return fine
+
+        from core.classifier import detect_brand, detect_gender, detect_material
+        axis = cats.get("axis") or ""
+        detector = {"brand": detect_brand, "gender": detect_gender,
+                    "material": detect_material}.get(axis)
+        if detector is not None:
+            return lambda row: detector(row.get("description", "")) or fine(row)
+        if axis == "price_band" and full_df is not None:
+            prices = full_df["price_clean"].dropna()
+            def band_label(row):
+                p = row.get("price_clean")
+                if pd.isna(p):
+                    return fine(row)
+                return self._assign_price_band(p, prices) or fine(row)
+            return band_label
+        return fine  # subtype / category: fine label already is the axis value
 
     @staticmethod
     def _first_line(text: str, max_len: int = 60) -> str:

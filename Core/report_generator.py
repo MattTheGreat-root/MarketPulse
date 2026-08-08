@@ -227,6 +227,9 @@ class ReportGenerator:
         if comparison and competitors:
             sections.append(self._competitor_section(client, comparison, competitors))
             sections.append(self._advice_section(comparison))
+        # Always-on, data-driven recommendations from the shop's own numbers, so
+        # a solo report (no competitor) still tells the owner what to do next.
+        sections.append(self._recommendations_section(client))
         sections.append(self._top_posts_section(client))
         sections.append(self._footer(brand))
         return _renumber_sections("\n".join(s for s in sections if s))
@@ -862,6 +865,128 @@ class ReportGenerator:
         <section class="section">
             <h2>۱۰. توصیه‌های راهبردی</h2>
             <p>پیشنهادهای عملی و قابل اجرا بر اساس داده‌های پیج شما و مقایسه با رقبا.</p>
+            <div class="advice-list">{items}</div>
+        </section>
+        """
+
+    # ---------------------------------------------------- owner recommendations
+    def _recommendations(self, client):
+        """Build a prioritized list of concrete, do-this-next actions from the
+        shop's OWN data — no competitor required. Every item is gated on the
+        signal that justifies it, then a few evergreen best-practices backfill so
+        the section is always useful. Returns a list of Persian strings."""
+        recs = []
+        cats = client.get("categories", {}) or {}
+        pricing = client.get("pricing", {}) or {}
+        momentum = client.get("momentum", {}) or {}
+        signals = client.get("demand_signals", {}) or {}
+        hashtags = client.get("hashtags", {}) or {}
+        post_count = client.get("post_count", 0) or 0
+        axis_fa = cats.get("axis_label_fa", "دسته")
+
+        # 1) Double down on the winner, fix/trim the laggard.
+        star, under = cats.get("star_category"), cats.get("underperformer")
+        if star and under and star != under:
+            recs.append(
+                f"بیشترین تعامل را {axis_fa} «{_e(star)}» می‌گیرد و «{_e(under)}» کمترین را. "
+                f"سهم تولید محتوا را به سمت «{_e(star)}» ببرید و برای «{_e(under)}» کیفیت "
+                f"عکس و کپشن را بالا ببرید یا از سبد کنار بگذارید."
+            )
+        elif star:
+            recs.append(
+                f"«{_e(star)}» پرتعامل‌ترین {axis_fa} شماست؛ آن را ستون اصلی تقویم محتوایی "
+                f"قرار دهید و مدل‌های مشابهش را بیشتر معرفی کنید."
+            )
+
+        # 2) Momentum: react to the trend direction.
+        if momentum.get("available") and momentum.get("growth_pct") is not None:
+            g = momentum["growth_pct"]
+            if g < -10:
+                recs.append(
+                    f"تعامل پیج نسبت به پست‌های قدیمی‌تر حدود {abs(round(g))}٪ افت کرده است. "
+                    f"فرمت و ساعت انتشار پرتعامل‌ترین پست‌های گذشته را بازسازی کنید و چند هفته "
+                    f"تناوب انتشار را منظم بالا ببرید."
+                )
+            elif g > 10:
+                recs.append(
+                    f"روند تعامل پیج صعودی است (+{round(g)}٪). با افزایش تناوب انتشار و معرفی "
+                    f"محصولات حاشیه‌سود بالاتر از این شتاب برای فروش بیشتر استفاده کنید."
+                )
+
+        # 3) Pricing sweet spot.
+        if pricing.get("available") and pricing.get("best_selling_band"):
+            recs.append(
+                f"بازه قیمتی «{_e(pricing['best_selling_band'])} تومان» بیشترین تعامل را جذب "
+                f"می‌کند؛ محصولات جدید را در همین بازه معرفی و در استوری و هایلایت برجسته کنید."
+            )
+
+        # 4) Hidden prices → lost leads. Common Iranian-shop leak.
+        unpriced = pricing.get("count_unpriced", 0)
+        if post_count and unpriced >= max(3, 0.25 * post_count):
+            recs.append(
+                f"{_fmt_num(unpriced)} پست قیمت مشخص ندارند. درج شفاف قیمت در کپشن، کامنت‌های "
+                f"«قیمت؟» را کم می‌کند، اعتماد می‌سازد و نرخ تبدیل به خرید را بالا می‌برد."
+            )
+
+        # 5) Buyer-intent comments = warm leads sitting unanswered.
+        if signals.get("price_questions"):
+            recs.append(
+                f"{_fmt_num(signals['price_questions'])} کامنت پرسش قیمت ثبت شده؛ این‌ها لید داغ‌اند. "
+                f"سریع و مستقیم پاسخ دهید یا قیمت را در کپشن بگذارید تا خریدار سرد نشود."
+            )
+        if signals.get("order_intents"):
+            recs.append(
+                f"{_fmt_num(signals['order_intents'])} کامنت با قصد خرید شناسایی شد؛ برای این افراد "
+                f"پیام مستقیم با راهنمای ثبت سفارش بفرستید."
+            )
+        if signals.get("complaints"):
+            recs.append(
+                f"{_fmt_num(signals['complaints'])} کامنت شاکی یا منفی وجود دارد؛ علنی و محترمانه "
+                f"پاسخ دهید — مدیریت درست نارضایتی، اعتماد مخاطبان دیگر را هم جلب می‌کند."
+            )
+
+        # 6) Hashtag hygiene.
+        top_tags = hashtags.get("top_performing") or []
+        if top_tags:
+            names = "، ".join(_e(t["tag"]) for t in top_tags[:3])
+            recs.append(
+                f"هشتگ‌های پرتعامل شما ({names}) را در پست‌های بعدی هم به‌کار ببرید و "
+                f"ترکیب‌های مشابه را آزمایش کنید."
+            )
+        elif not (hashtags.get("most_used") or []):
+            recs.append(
+                "پست‌ها هشتگ مؤثری ندارند؛ ۵ تا ۱۰ هشتگ مرتبط فارسی و انگلیسی اضافه کنید تا "
+                "دیده‌شدن ارگانیک پیج بیشتر شود."
+            )
+
+        # Evergreen backfill so the section is never thin.
+        evergreen = [
+            "در پایان هر کپشن یک فراخوان روشن بگذارید (مثلاً «برای قیمت و ثبت سفارش دایرکت دهید») "
+            "تا نرخ تعامل و لید بالا برود.",
+            "پرفروش‌ترین محصولات را به‌صورت هایلایت دائمی و پست‌های نظر مشتری بازنشر کنید تا "
+            "اعتماد و فروش تکرارشونده بسازید.",
+            "زمان انتشار را تست کنید: چند هفته پست‌ها را در ساعات مختلف بگذارید و ساعت پرتعامل‌تر "
+            "را به روال ثابت تبدیل کنید.",
+        ]
+        for e in evergreen:
+            if len(recs) >= 7:
+                break
+            recs.append(e)
+        return recs
+
+    def _recommendations_section(self, client):
+        recs = self._recommendations(client)
+        if not recs:
+            return ""
+        items = "".join(
+            f"<div class='advice-card'><span class='advice-num'>{_fa_num(i + 1)}</span>"
+            f"<p>{r}</p></div>"
+            for i, r in enumerate(recs)
+        )
+        return f"""
+        <section class="section">
+            <h2>۹. توصیه‌های عملی برای رشد فروش</h2>
+            <p>اقدام‌های مشخص و اولویت‌بندی‌شده بر اساس داده‌های همین پیج — بدون نیاز به مقایسه با رقبا.</p>
             <div class="advice-list">{items}</div>
         </section>
         """
