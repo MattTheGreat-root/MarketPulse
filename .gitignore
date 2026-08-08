@@ -12,6 +12,12 @@ chrome_profile_*
 chromedriver
 chromedriver.exe
 
+# Authenticated-session artifacts (burner account logins — keep OUT of git)
+auth/*.session
+auth/*.session-journal
+*.session
+*.session-journal
+
 # Scraped Data Output Directory
 data/
 reports/

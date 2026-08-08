@@ -132,14 +132,26 @@ numpy
 pandas
 groq
 python-dotenv
+telethon        # only for authenticated Telegram scraping (comments)
 ```
+Install everything with `pip install -r requirements.txt`.
 
 ### Environment Variables
 Create a `.env` file in the project root:
 ```
 GROQ_API_KEY=your_groq_api_key_here
+
+# Optional — authenticated Telegram scraping (reads channel comments over
+# MTProto). Create an app at https://my.telegram.org (API development tools).
+TELEGRAM_API_ID=1234567
+TELEGRAM_API_HASH=your_api_hash_here
+TELEGRAM_PHONE=+98...
 ```
-The Groq API key is optional -- AI comment analysis is skipped when the key is absent.
+The Groq API key is optional -- AI comment analysis is skipped when the key is
+absent. The Telegram keys are optional too: without them, Telegram falls back to
+the anonymous web preview (posts only, no comments). On the first authenticated
+run, Telegram sends a login code to the burner account; enter it once and the
+session is cached under `auth/` for subsequent runs.
 
 ### Chrome Setup
 - A ChromeDriver binary must be available in PATH or as `chromedriver.exe` in the project root.
@@ -158,9 +170,12 @@ questionnaire.
 | `normal` | 100 | up to 3 | Rubino only | full | no | Paid full report |
 | `pro` | all | all | Rubino only | full | yes | Everything the engine can do |
 
-> Comment-based AI analysis only runs on platforms whose scraper captures
-> comments (currently Rubino). Telegram/Bale web previews expose no comments
-> yet, so it is skipped there automatically.
+> Comment-based AI analysis runs on platforms whose scraper captures comments.
+> **Rubino** always does. **Telegram** does too when MTProto credentials are set
+> in `.env` (it reads the linked discussion-group comments via an authenticated
+> backend); without credentials it falls back to the anonymous preview and
+> comments are skipped. **Bale** exposes no comments (neither its web preview nor
+> its native API), so it is preview-only and comment analysis is skipped there.
 
 **Fast path (CLI args, zero prompts):**
 ```
