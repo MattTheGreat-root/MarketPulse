@@ -14,6 +14,7 @@ from platforms.rubino_scraper import RubinoScraper
 from platforms.telegram_scraper import TelegramScraper
 from platforms.telegram_authed_scraper import TelegramAuthedScraper
 from platforms.bale_scraper import BaleScraper
+from platforms.instagram_scraper import InstagramScraper
 from core.analyzer import MarketAnalyzer, CompetitorComparator
 from core.report_generator import ReportGenerator
 from core.packager import ClientPackager
@@ -27,8 +28,8 @@ from core.packager import ClientPackager
 #   mini   - FREE lead magnet. 10 posts, at most 1 competitor, mini report,
 #            no comments/NLP, no zip. This is what you send in cold outreach.
 #   normal - Paid full report. More posts + competitors, full report, comments
-#            + AI comment analysis on Rubino (Telegram/Bale previews expose no
-#            comments yet), no zip.
+#            + AI comment analysis on Rubino (Telegram/Bale/Instagram previews
+#            expose no comments yet), no zip.
 #   pro    - Everything the engine can do: max posts, all competitors, comments
 #            + NLP, full report, packaged client .zip deliverable.
 #
@@ -37,6 +38,8 @@ from core.packager import ClientPackager
 # does; Telegram does too, but only through its AUTHENTICATED backend, which
 # needs MTProto credentials in .env. Bale's preview exposes no comments and its
 # native API (aiobale) has no comment-thread method, so Bale stays preview-only.
+# Instagram is scraped anonymously (no login = no account to ban), and anonymous
+# access can't read comment text, so Instagram is preview-only too.
 # ---------------------------------------------------------------------------
 MODES = {
     "mini": {
@@ -65,7 +68,7 @@ MODES = {
     },
 }
 
-PLATFORMS = {"r": "rubino", "t": "telegram", "b": "bale"}
+PLATFORMS = {"r": "rubino", "t": "telegram", "b": "bale", "i": "instagram"}
 
 # Platforms that can capture comments regardless of extra config.
 COMMENT_CAPABLE = {"rubino"}
@@ -105,6 +108,8 @@ def scrape_profile(username, max_posts, platform="rubino", want_comments=False):
         return _scrape_telegram(username, max_posts, want_comments=want_comments)
     if platform == "bale":
         return _scrape_bale(username, max_posts)
+    if platform == "instagram":
+        return _scrape_instagram(username, max_posts)
     return _scrape_rubino(username, max_posts)
 
 
@@ -120,6 +125,26 @@ def _scrape_bale(username, max_posts):
         import traceback
         traceback.print_exc()
         print(f"[!] Bale scraping failed for @{username}: {e}")
+        return False
+
+
+def _scrape_instagram(username, max_posts):
+    """Scrape a public Instagram profile anonymously (no login = no account to ban).
+
+    Posts, captions, like/comment counts and timestamps only — Instagram gates
+    comment TEXT behind login, so comments come back empty and comment-based AI
+    signals are skipped, exactly like the Bale preview.
+    """
+    try:
+        print(f"\n[*] Initializing Instagram scraping pipeline for profile: @{username}")
+        # No Selenium driver required; InstagramScraper is pure HTTP (instaloader).
+        scraper = InstagramScraper(driver=None, target=username)
+        results = scraper.run(max_posts=max_posts)
+        return bool(results)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[!] Instagram scraping failed for @{username}: {e}")
         return False
 
 
@@ -236,9 +261,9 @@ def gather_run_config(argv):
     # --- platform ---
     platform = resolve_platform(args[1]) if len(args) >= 2 else None
     while not platform:
-        platform = resolve_platform(ask("[?] Platform: r (rubino) / b (bale) / t (telegram): ", "r"))
+        platform = resolve_platform(ask("[?] Platform: r (rubino) / b (bale) / t (telegram) / i (instagram): ", "r"))
         if not platform:
-            print("    Please enter one of: r, b, t.")
+            print("    Please enter one of: r, b, t, i.")
     cfg["platform"] = platform
 
     # --- client ---
@@ -292,6 +317,8 @@ def print_plan(cfg):
     if cfg["comments"] and not platform_supports_comments(cfg["platform"]):
         if cfg["platform"] == "telegram":
             comment_note = "  (skipped: set TELEGRAM_API_ID/HASH/PHONE in .env to read comments)"
+        elif cfg["platform"] == "instagram":
+            comment_note = "  (skipped: anonymous Instagram exposes no comment text)"
         else:
             comment_note = f"  (skipped: {cfg['platform']} exposes no comments)"
     print(f"\n[=] Run plan")
@@ -326,6 +353,9 @@ def main():
         if platform == "telegram":
             print("[i] Telegram comments need MTProto credentials "
                   "(TELEGRAM_API_ID / TELEGRAM_API_HASH / TELEGRAM_PHONE in .env); "
+                  "AI comment analysis skipped.")
+        elif platform == "instagram":
+            print("[i] Anonymous Instagram exposes no comment text; "
                   "AI comment analysis skipped.")
         else:
             print(f"[i] {platform.capitalize()} has no comments; AI comment analysis skipped.")
