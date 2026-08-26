@@ -29,3 +29,4 @@ deliverables/
 .DS_Store
 
 .env
+.claude
