@@ -1,6 +1,6 @@
 # MarketPulse
 
-MarketPulse is a data and intelligence engine for analyzing Iranian social commerce profiles across the Rubino, Telegram, and Bale platforms. It scrapes public profile data, performs offline and AI-powered analysis, and generates client-ready Persian reports (HTML and PDF) with competitive comparison and actionable recommendations.
+MarketPulse is a data and intelligence engine for analyzing Iranian social commerce profiles across the Rubino, Telegram, Bale, and Instagram platforms. It scrapes public profile data, performs offline and AI-powered analysis, and generates client-ready Persian reports (HTML and PDF) with competitive comparison and actionable recommendations.
 
 ## Project Structure
 
@@ -24,7 +24,8 @@ MarketPulse/
 │   ├── __init__.py
 │   ├── rubino_scraper.py        # Rubino scraper (Selenium-based)
 │   ├── telegram_scraper.py      # Telegram scraper (HTTP, public preview)
-│   └── bale_scraper.py          # Bale scraper (HTTP, public preview)
+│   ├── bale_scraper.py          # Bale scraper (HTTP, public preview)
+│   └── instagram_scraper.py     # Instagram scraper (HTTP, anonymous via instaloader)
 ├── auth/
 │   ├── __init__.py
 │   └── rubino_auth.py           # Rubino session authentication helper
@@ -48,6 +49,7 @@ The pipeline is organized into four sequential phases:
 - Each scraper produces a CSV (and XLSX) file in `data/` with a consistent schema: `post_index`, `description`, `price`, `engagement`, `comments`.
 - **Rubino** uses Selenium with an isolated Chrome profile (`chrome_profile_rubino/`) and requires manual login via `RubikaAuth`.
 - **Telegram** and **Bale** use pure HTTP (httpx) against their public web previews, requiring no authentication.
+- **Instagram** uses pure HTTP via `instaloader` in **anonymous** mode (no login, so there is no account to ban). Anonymous access exposes posts, captions, and like/comment counts but not comment text, so Instagram is preview-only for comments (like Bale).
 
 ### 2. Analysis Phase
 - `MarketAnalyzer` (`core/analyzer.py`) reads the latest CSV for a target and produces a `ProfileInsights` dictionary containing:
@@ -119,6 +121,9 @@ HTTP-based scraper using the public Telegram web preview (`t.me/s/`). Supports p
 ### `platforms/bale_scraper.py`
 HTTP-based scraper for Bale (`ble.ir/s/`). No pagination support (fixed recent window). Uses CSS-module prefix matching for stable selectors across front-end builds.
 
+### `platforms/instagram_scraper.py`
+HTTP-based scraper for Instagram via `instaloader` in **anonymous** mode — no login means no account to ban, the lowest-risk option for a notoriously ban-happy platform. Configured metadata-only (no media/comment downloads), with a per-post delay and a safety cap (`ANON_SAFE_CAP`) on unbounded runs to stay under the anonymous rate limit. Extracts captions, like/comment **counts**, view counts (videos), and timestamps; reverses Instagram's newest-first ordering so `post_index` 1 = oldest (the analyzer's momentum convention). Comment **text** is login-gated, so `comments` is left empty and comment-based AI signals are skipped, exactly like the Bale preview. Anonymous access can be login-walled or IP-rate-limited by Instagram; when that happens the scraper degrades gracefully (clear message, returns no rows) rather than hammering the endpoint — retry later or from a cleaner IP.
+
 ## Setup and Requirements
 
 ### Python Dependencies
@@ -132,14 +137,27 @@ numpy
 pandas
 groq
 python-dotenv
+telethon        # only for authenticated Telegram scraping (comments)
+instaloader     # only for Instagram scraping (anonymous, posts-only)
 ```
+Install everything with `pip install -r requirements.txt`.
 
 ### Environment Variables
 Create a `.env` file in the project root:
 ```
 GROQ_API_KEY=your_groq_api_key_here
+
+# Optional — authenticated Telegram scraping (reads channel comments over
+# MTProto). Create an app at https://my.telegram.org (API development tools).
+TELEGRAM_API_ID=1234567
+TELEGRAM_API_HASH=your_api_hash_here
+TELEGRAM_PHONE=+98...
 ```
-The Groq API key is optional -- AI comment analysis is skipped when the key is absent.
+The Groq API key is optional -- AI comment analysis is skipped when the key is
+absent. The Telegram keys are optional too: without them, Telegram falls back to
+the anonymous web preview (posts only, no comments). On the first authenticated
+run, Telegram sends a login code to the burner account; enter it once and the
+session is cached under `auth/` for subsequent runs.
 
 ### Chrome Setup
 - A ChromeDriver binary must be available in PATH or as `chromedriver.exe` in the project root.
@@ -158,22 +176,30 @@ questionnaire.
 | `normal` | 100 | up to 3 | Rubino only | full | no | Paid full report |
 | `pro` | all | all | Rubino only | full | yes | Everything the engine can do |
 
-> Comment-based AI analysis only runs on platforms whose scraper captures
-> comments (currently Rubino). Telegram/Bale web previews expose no comments
-> yet, so it is skipped there automatically.
+> Comment-based AI analysis runs on platforms whose scraper captures comments.
+> **Rubino** always does. **Telegram** does too when MTProto credentials are set
+> in `.env` (it reads the linked discussion-group comments via an authenticated
+> backend); without credentials it falls back to the anonymous preview and
+> comments are skipped. **Bale** exposes no comments (neither its web preview nor
+> its native API), so it is preview-only and comment analysis is skipped there.
+> **Instagram** is scraped anonymously (no login = no account to ban), and
+> anonymous access can't read comment text, so it is preview-only too — posts,
+> pricing, engagement, categories, and momentum all work; comment analysis is
+> skipped.
 
 **Fast path (CLI args, zero prompts):**
 ```
 python main.py <mode> <platform> <client> [comp1,comp2] [saved]
 ```
 - `mode`: `mini` | `normal` | `pro` (or `m` | `n` | `p`)
-- `platform`: `r` (rubino) | `b` (bale) | `t` (telegram)
+- `platform`: `r` (rubino) | `b` (bale) | `t` (telegram) | `i` (instagram)
 - add a trailing `saved` to reuse the latest saved CSVs instead of scraping
 
 ```
 python main.py mini b oxostreetwear            # free Bale mini report, scrape fresh
 python main.py normal r myshop rival1,rival2   # full Rubino report vs 2 competitors
 python main.py pro t oxo comp1 saved           # pro report from latest saved data
+python main.py mini i oxostreetwear            # free Instagram mini report (anonymous, posts-only)
 ```
 
 **Interactive path:** run `python main.py` with no (or partial) args and it
@@ -205,6 +231,7 @@ All scraped data files follow a consistent CSV schema with these core columns:
 
 Platform-specific extra columns (ignored by the analyzer but present in the XLSX):
 - Telegram/Bale: `views`, `reactions`, `posted_at`, `post_url`
+- Instagram: `likes`, `comments_count`, `views`, `posted_at`, `post_url`
 
 ## Report Output
 

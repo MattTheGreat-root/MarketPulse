@@ -1,0 +1,22 @@
+# MarketPulse Python dependencies.
+# Install with:  pip install -r requirements.txt
+
+selenium
+httpx
+beautifulsoup4
+openpyxl
+weasyprint
+numpy
+pandas
+groq
+python-dotenv
+
+# Authenticated Telegram backend (MTProto) — reads channel-post comments from
+# the linked discussion group. Only needed if you scrape Telegram WITH comments;
+# the anonymous web-preview backend has no extra dependency.
+telethon
+
+# Instagram backend — anonymous, metadata-only scraping (no login = no account
+# to ban). Only needed if you scrape Instagram. Anonymous access exposes posts,
+# captions, and like/comment counts but not comment text.
+instaloader
